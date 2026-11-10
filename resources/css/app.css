@@ -1,0 +1,97 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+    font-family: 'Peyda';
+    font-style: normal;
+    font-weight: 300;
+    font-display: swap;
+    src: url('/fonts/peyda/Peyda-Light.woff2') format('woff2'),
+         url('/fonts/peyda/Peyda-Light.ttf') format('truetype');
+}
+
+@font-face {
+    font-family: 'Peyda';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('/fonts/peyda/Peyda-Regular.woff2') format('woff2'),
+         url('/fonts/peyda/Peyda-Regular.ttf') format('truetype');
+}
+
+@font-face {
+    font-family: 'Peyda';
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url('/fonts/peyda/Peyda-Medium.woff2') format('woff2'),
+         url('/fonts/peyda/Peyda-Medium.ttf') format('truetype');
+}
+
+@font-face {
+    font-family: 'Peyda';
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url('/fonts/peyda/Peyda-SemiBold.woff2') format('woff2'),
+         url('/fonts/peyda/Peyda-SemiBold.ttf') format('truetype');
+}
+
+@font-face {
+    font-family: 'Peyda';
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url('/fonts/peyda/Peyda-Bold.woff2') format('woff2'),
+         url('/fonts/peyda/Peyda-Bold.ttf') format('truetype');
+}
+
+@font-face {
+    font-family: 'Peyda';
+    font-style: normal;
+    font-weight: 800;
+    font-display: swap;
+    src: url('/fonts/peyda/Peyda-ExtraBold.woff2') format('woff2'),
+         url('/fonts/peyda/Peyda-ExtraBold.ttf') format('truetype');
+}
+
+@font-face {
+    font-family: 'Peyda';
+    font-style: normal;
+    font-weight: 900;
+    font-display: swap;
+    src: url('/fonts/peyda/Peyda-Black.woff2') format('woff2'),
+         url('/fonts/peyda/Peyda-Black.ttf') format('truetype');
+}
+
+@layer base {
+    :root {
+        --font-family: 'Peyda', sans-serif;
+    }
+
+    * {
+        box-sizing: border-box;
+        font-family: 'Peyda', sans-serif;
+    }
+
+    body, button, input, select, textarea {
+        font-family: 'Peyda', sans-serif !important;
+    }
+}
+
+/* اسکرول‌بار هماهنگ با پنل ادمین */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: rgba(15, 23, 42, 0.15);
+}
+::-webkit-scrollbar-thumb {
+    background: rgba(20, 184, 166, 0.38);
+    border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(20, 184, 166, 0.65);
+}

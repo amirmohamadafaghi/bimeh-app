@@ -1,0 +1,10 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="384" height="384">
+  <path d="M9.5,18c-0.176,0-6.824,0-7,0C1.672,18,1,18.672,1,19.5S1.672,21,2.5,21c0.176,0,6.824,0,7,0c0.828,0,1.5-0.672,1.5-1.5S10.328,18,9.5,18z" fill="#00EFFF" />
+  <path d="M21.5,18c-0.176,0-6.824,0-7,0c-0.828,0-1.5,0.672-1.5,1.5s0.672,1.5,1.5,1.5c0.176,0,6.824,0,7,0c0.828,0,1.5-0.672,1.5-1.5S22.328,18,21.5,18z" fill="#00EFFF" />
+  <circle cx="6" cy="13" r="3" opacity=".35" fill="#00EFFF" />
+  <circle cx="18" cy="13" r="3" opacity=".35" fill="#00EFFF" />
+  <circle cx="12" cy="7.5" r="2.5" opacity=".35" fill="#00EFFF" />
+  <circle cx="5.5" cy="5.5" r="2.5" opacity=".35" fill="#00EFFF" />
+  <circle cx="18.5" cy="5.5" r="2.5" opacity=".35" fill="#00EFFF" />
+</svg>
