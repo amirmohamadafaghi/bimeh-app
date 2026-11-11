@@ -1,9 +1,11 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
-use App\Casts\JalaliDateCast;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class InstallmentAudit extends Model
 {
@@ -19,18 +21,21 @@ class InstallmentAudit extends Model
         'description',
     ];
 
-    public function installment()
+    protected function casts(): array
+    {
+        return [
+            'old_amount' => 'integer',
+            'new_amount' => 'integer',
+        ];
+    }
+
+    public function installment(): BelongsTo
     {
         return $this->belongsTo(Installment::class);
     }
 
-    public function actor()
+    public function actor(): BelongsTo
     {
         return $this->belongsTo(User::class, 'actor_id');
-    }
-
-    public function getCreatedAtJalaliAttribute(): string
-    {
-        return JalaliDateCast::toJalali($this->created_at, 'Y/m/d H:i:s');
     }
 }

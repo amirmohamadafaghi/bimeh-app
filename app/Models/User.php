@@ -6,7 +6,6 @@ namespace App\Models;
 
 use App\Enums\UserRole;
 use Filament\Models\Contracts\FilamentUser;
-use Filament\Models\Contracts\HasAvatar;
 use Filament\Panel;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -15,7 +14,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
-class User extends Authenticatable implements FilamentUser, HasAvatar
+class User extends Authenticatable implements FilamentUser
 {
     use HasFactory, Notifiable, SoftDeletes;
 
@@ -24,21 +23,20 @@ class User extends Authenticatable implements FilamentUser, HasAvatar
         'national_code',
         'mobile',
         'phone',
-        'email',
+        'birth_date',
         'gender',
+        'address',
+        'policyholder_type',
+        'profile_title',
+        'email',
         'password',
         'role',
         'permissions',
-        'policyholder_type',
+        'bale_chat_id',
+        'push_subscription',
         'payment_badge',
         'suggested_badge',
         'average_delay_days',
-        'profile_title',
-        'birth_date',
-        'address',
-        'bale_chat_id',
-        'preferred_notification_hour',
-        'push_subscription',
     ];
 
     protected $hidden = [
@@ -49,53 +47,48 @@ class User extends Authenticatable implements FilamentUser, HasAvatar
     protected function casts(): array
     {
         return [
-            'email_verified_at'           => 'datetime',
-            'password'                    => 'hashed',
-            'preferred_notification_hour' => 'integer',
-            'average_delay_days'          => 'integer',
-            'permissions'                 => 'array',
-            'push_subscription'           => 'array',
+            'password'           => 'hashed',
+            'permissions'        => 'array',
+            'push_subscription'  => 'array',
+            'average_delay_days' => 'integer',
         ];
     }
 
     public static function availableManagerPermissions(): array
     {
         return [
-            'manage_users'         => 'مدیریت و ویرایش بیمه‌گذاران',
-            'delete_users'         => 'حذف بیمه‌گذاران (انتقال به سطل زباله)',
-            'manage_policies'      => 'مدیریت بیمه‌نامه‌ها',
-            'manage_installments'  => 'مدیریت و ویرایش اقساط',
-            'approve_installments' => 'تایید وصولی و تغییر وضعیت مالی اقساط',
+            'manage_users'         => 'مشاهده و ویرایش بیمه‌گذاران',
+            'delete_users'         => 'حذف بیمه‌گذاران',
             'import_excel'         => 'آپلود و همگام‌سازی فایل اکسل',
+            'manage_policies'      => 'مدیریت و ثبت بیمه‌نامه‌ها',
+            'manage_installments'  => 'مدیریت و تایید وصول اقساط',
             'manage_notifications' => 'مدیریت اعلان‌ها و ارسال پیام بله',
+            'manage_insurers'      => 'مدیریت شرکت‌های بیمه',
         ];
     }
 
     public function canAccessPanel(Panel $panel): bool
     {
-        return in_array($this->role, [
-            UserRole::Admin->value,
-            UserRole::SuperAdmin->value,
-            UserRole::Manager->value,
-        ], true);
+        $roleValue = $this->role instanceof UserRole ? $this->role->value : (string) $this->role;
+
+        return in_array($roleValue, ['admin', 'manager', 'staff'], true);
     }
 
     public function isAdmin(): bool
     {
-        return in_array($this->role, [UserRole::Admin->value, UserRole::SuperAdmin->value], true);
+        $roleValue = $this->role instanceof UserRole ? $this->role->value : (string) $this->role;
+
+        return $roleValue === 'admin';
     }
 
     public function isManager(): bool
     {
-        return $this->role === UserRole::Manager->value;
+        $roleValue = $this->role instanceof UserRole ? $this->role->value : (string) $this->role;
+
+        return in_array($roleValue, ['manager', 'staff'], true);
     }
 
-    public function isCustomer(): bool
-    {
-        return $this->role === UserRole::Customer->value || empty($this->role);
-    }
-
-    public function hasPermission(string $permission): bool
+public function hasPermission(string $permissionKey): bool
     {
         if ($this->isAdmin()) {
             return true;
@@ -103,53 +96,15 @@ class User extends Authenticatable implements FilamentUser, HasAvatar
 
         if ($this->isManager()) {
             $perms = is_array($this->permissions) ? $this->permissions : [];
+            if (empty($perms)) {
+                return $permissionKey === 'delete_users' ? false : true;
+            }
 
-            return in_array($permission, $perms, true);
+            return in_array($permissionKey, $perms, true);
         }
 
         return false;
     }
-
-    public function hasFinancialAccess(): bool
-    {
-        if ($this->isAdmin()) {
-            return true;
-        }
-
-        return $this->isManager() && (
-            $this->hasPermission('approve_installments') ||
-            $this->hasPermission('manage_installments') ||
-            $this->hasPermission('delete_users')
-        );
-    }
-
-    public function getGenderLabelAttribute(): string
-    {
-        return match ($this->gender) {
-            'male', 'مرد', 'آقا'   => 'مرد',
-            'female', 'زن', 'خانم' => 'زن',
-            default                => $this->policyholder_type === 'حقوقی' ? 'شخص حقوقی' : 'ثبت نشده',
-        };
-    }
-
-    public function getAdaptiveFirstReminderOffset(int $defaultOffset = -3): int
-    {
-        if ($this->payment_badge === 'bad_payer' || ($this->average_delay_days ?? 0) > 5) {
-            return min($defaultOffset, -5);
-        }
-
-        if ($this->payment_badge === 'good_payer') {
-            return max($defaultOffset, -2);
-        }
-
-        return $defaultOffset;
-    }
-
-    public function getFilamentAvatarUrl(): ?string
-    {
-        return asset('images/icons/app_admin.svg');
-    }
-
     public function policies(): HasMany
     {
         return $this->hasMany(Policy::class);
@@ -163,10 +118,5 @@ class User extends Authenticatable implements FilamentUser, HasAvatar
     public function notificationLogs(): HasMany
     {
         return $this->hasMany(NotificationLog::class);
-    }
-
-    public function systemActivities(): HasMany
-    {
-        return $this->hasMany(SystemActivity::class, 'actor_id');
     }
 }

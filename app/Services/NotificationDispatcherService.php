@@ -32,7 +32,7 @@ class NotificationDispatcherService
             return null;
         }
 
-        $activeChannels = is_array($channels) && count($channels) > 0
+        $activeChannels = (is_array($channels) && count($channels) > 0)
             ? $channels
             : ['database', 'bale'];
 
@@ -84,11 +84,17 @@ class NotificationDispatcherService
 
     protected function resolveTitle(string $type, int $offsetDay): string
     {
-        if ($type === 'policy_renewal') {
+        if ($type === 'policy_renewal' || $type === 'renewal_auto_blast') {
             return 'یادآور تمدید بیمه‌نامه';
         }
         if ($type === 'payment_confirmed') {
             return 'تأیید پرداخت قسط';
+        }
+        if ($type === 'birthday_greeting') {
+            return 'تبریک زادروز';
+        }
+        if ($type === 'custom_message' || $type === 'custom') {
+            return 'پیام مدیریت آفاق بیمه';
         }
         if ($offsetDay < 0) {
             return 'یادآور سررسید قسط';

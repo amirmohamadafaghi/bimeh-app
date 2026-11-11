@@ -4,84 +4,97 @@ declare(strict_types=1);
 
 namespace App\Support;
 
-final class PersianNormalizer
+class PersianNormalizer
 {
-    /**
-     * نام مستعار برای سازگاری کامل با تمامی صفحات و سرویس‌ها
-     */
-    public static function normalize(?string $value): string
-    {
-        return self::normalizeText($value);
-    }
+    private const PERSIAN_DIGITS = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
 
-    /**
-     * تبدیل اعداد فارسی و عربی به انگلیسی و یکسان‌سازی حروف ی و ک
-     */
-    public static function normalizeText(?string $value): string
+    private const ARABIC_DIGITS  = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
+
+    private const ENGLISH_DIGITS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
+
+    public static function toEnglishDigits(mixed $value): string
     {
         if ($value === null || $value === '') {
             return '';
         }
 
-        $replaced = str_replace(
-            ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹', '٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩', 'ي', 'ك', '‌'],
-            ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'ی', 'ک', ' '],
-            $value
-        );
+        $str = (string) $value;
+        $str = str_replace(self::PERSIAN_DIGITS, self::ENGLISH_DIGITS, $str);
+        $str = str_replace(self::ARABIC_DIGITS, self::ENGLISH_DIGITS, $str);
 
-        return trim(preg_replace('/\s+/', ' ', $replaced) ?? $replaced);
+        return trim($str);
     }
 
-    /**
-     * استخراج عدد خالص (حذف کاما، فاصله و تبدیل مقادیر علمی اکسل)
-     */
+    public static function normalizeText(mixed $value): string
+    {
+        $str = self::toEnglishDigits($value);
+
+        $str = str_replace(
+            ['ي', 'ى', 'ئ', 'ك', 'ة', 'ؤ', 'أ', 'إ', "\u{200F}", "\u{200E}"],
+            ['ی', 'ی', 'ی', 'ک', 'ه', 'و', 'ا', 'ا', '', ''],
+            $str
+        );
+
+        return trim($str);
+    }
+
+    public static function normalize(mixed $value): string
+    {
+        return self::normalizeText($value);
+    }
+
     public static function cleanNumber(mixed $value): string
     {
         if ($value === null || $value === '') {
             return '';
         }
 
-        $str = self::normalizeText((string) $value);
-        $str = str_replace([',', ' ', '٬', '_'], '', $str);
-
-        if (is_numeric($str)) {
-            return number_format((float) $str, 0, '', '');
+        if (is_float($value) || (is_string($value) && stripos($value, 'E') !== false && is_numeric($value))) {
+            $value = number_format((float) $value, 0, '', '');
         }
 
-        return $str;
+        $str = self::toEnglishDigits($value);
+
+        if (preg_match('/^(\d+)\.0+$/', $str, $matches)) {
+            $str = $matches[1];
+        }
+
+        return preg_replace('/[^0-9]/', '', $str) ?? '';
     }
 
-    /**
-     * استانداردسازی کد ملی (بازگردانی صفر ابتدایی حذف‌شده توسط اکسل)
-     */
     public static function cleanNationalCode(mixed $value): string
     {
-        $code = self::cleanNumber($value);
-        if ($code === '') {
+        $digits = self::cleanNumber($value);
+        if ($digits === '') {
             return '';
         }
 
-        if (in_array(strlen($code), [8, 9], true)) {
-            return str_pad($code, 10, '0', STR_PAD_LEFT);
+        if (strlen($digits) >= 8 && strlen($digits) < 10) {
+            return str_pad($digits, 10, '0', STR_PAD_LEFT);
         }
 
-        return $code;
+        return $digits;
     }
 
-    /**
-     * استانداردسازی شماره موبایل (تبدیل 915xxxxxxx به 0915xxxxxxx)
-     */
     public static function cleanMobile(mixed $value): string
     {
-        $mobile = self::cleanNumber($value);
-        if ($mobile === '') {
+        $digits = self::cleanNumber($value);
+        if ($digits === '') {
             return '';
         }
 
-        if (strlen($mobile) === 10 && str_starts_with($mobile, '9')) {
-            return '0' . $mobile;
+        if (str_starts_with($digits, '989') && strlen($digits) === 12) {
+            return '0' . substr($digits, 2);
         }
 
-        return $mobile;
+        if (str_starts_with($digits, '00989') && strlen($digits) === 14) {
+            return '0' . substr($digits, 4);
+        }
+
+        if (strlen($digits) === 10 && str_starts_with($digits, '9')) {
+            return '0' . $digits;
+        }
+
+        return $digits;
     }
 }

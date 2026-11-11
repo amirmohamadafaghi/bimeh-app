@@ -252,7 +252,7 @@ class CustomerPortalController extends Controller
         $installment->loadMissing('policy.user');
 
         if ($installment->status === 'paid') {
-            // قسط از قبل تسویه شده است
+            // قسط از قبل پرداخت شده است
         } else {
             $installment->update([
                 'status' => 'awaiting_approval',

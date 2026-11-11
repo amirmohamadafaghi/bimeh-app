@@ -15,12 +15,15 @@ class SecurityHeadersMiddleware
         /** @var Response $response */
         $response = $next($request);
 
-        // تنظیم هدر برای پشتیبانی از مینی‌اپ بله (اجازه بارگذاری در iframe بله)
-        $response->headers->set('Content-Security-Policy', "frame-ancestors 'self' https://*.bale.ai;");
+        $response->headers->set('X-Frame-Options', 'SAMEORIGIN');
         $response->headers->set('X-Content-Type-Options', 'nosniff');
         $response->headers->set('X-XSS-Protection', '1; mode=block');
         $response->headers->set('Referrer-Policy', 'strict-origin-when-cross-origin');
-        $response->headers->set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+        $response->headers->set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+
+        if ($request->isSecure()) {
+            $response->headers->set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+        }
 
         return $response;
     }

@@ -24,29 +24,27 @@ class Installment extends Model
         'installment_number',
         'amount',
         'paid_amount',
-        'payment_type',
-        'payment_identifier',
         'documented_amount',
         'documented_date',
+        'payment_identifier',
+        'payment_type',
         'profile_title',
         'due_date',
         'due_date_jalali',
         'status',
-        'tracking_code',
         'paid_at',
-        'followed_up_at',
+        'tracking_code',
     ];
 
     protected function casts(): array
     {
         return [
-            'due_date' => JalaliDateCast::class,
-            'paid_at' => 'datetime',
-            'followed_up_at' => 'datetime',
-            'amount' => 'integer',
-            'paid_amount' => 'integer',
-            'documented_amount' => 'integer',
+            'due_date'           => JalaliDateCast::class,
+            'paid_at'            => 'datetime',
             'installment_number' => 'integer',
+            'amount'             => 'integer',
+            'paid_amount'        => 'integer',
+            'documented_amount'  => 'integer',
         ];
     }
 
@@ -62,20 +60,39 @@ class Installment extends Model
 
     public function getDueDateJalaliAttribute(): string
     {
-        return $this->attributes['due_date_jalali'] ?? JalaliDateCast::toJalali($this->due_date);
+        if (empty($this->attributes['due_date_jalali'])) {
+            return JalaliDateCast::toJalali($this->due_date);
+        }
+
+        return (string) $this->attributes['due_date_jalali'];
     }
 
-    public function getPaidAtJalaliAttribute(): string
+    public function getRemainingAmountAttribute(): int
     {
-        return $this->paid_at ? JalaliDateCast::toJalali($this->paid_at, 'Y/m/d H:i') : '—';
+        if ($this->status === 'paid') {
+            return 0;
+        }
+
+        $paid = max((int) $this->paid_amount, (int) $this->documented_amount);
+
+        return max(0, (int) $this->amount - $paid);
     }
 
     public function generateSignedPaymentUrl(): string
     {
+        $userId = $this->policy?->user_id;
+
+        if (empty($userId)) {
+            return route('customer.dashboard');
+        }
+
         return URL::temporarySignedRoute(
-            'customer.installments.signed-pay',
-            now('Asia/Tehran')->addDays(7),
-            ['installment' => $this->id, 'user' => $this->policy?->user_id]
+            'customer.installment.single-pay',
+            now()->addDays(7),
+            [
+                'installment' => $this->id,
+                'user'        => $userId,
+            ]
         );
     }
 }

@@ -7,6 +7,7 @@ namespace App\Console\Commands;
 use App\Models\NotificationLog;
 use App\Models\NotificationSetting;
 use App\Models\Policy;
+use App\Models\SystemActivity;
 use App\Models\User;
 use App\Services\NotificationDispatcherService;
 use Carbon\Carbon;
@@ -35,8 +36,11 @@ class SendPolicyRenewalReminders extends Command
                         $message = $dispatcher->formatTemplate((string) $settings->renewal_template, [
                             'name'          => $policy->user->name ?: $policy->user->mobile,
                             'policy_number' => (string) $policy->policy_number,
+                            'title'         => (string) ($policy->vehicle_name ?: $policy->title),
                             'amount'        => number_format((int) $policy->total_amount),
                             'due_date'      => $policy->expires_at_jalali,
+                            'expires_at'    => $policy->expires_at_jalali,
+                            'days_left'     => (string) $daysBefore,
                         ]);
 
                         $log = $dispatcher->dispatch(
@@ -55,7 +59,20 @@ class SendPolicyRenewalReminders extends Command
                 }
             });
 
-        $this->info("تعداد {$sentCount} یادآور تمدید بیمه‌نامه ارسال شد.");
+        if ($sentCount > 0) {
+            SystemActivity::create([
+                'event_type' => 'cron_job_executed',
+                'title'      => "ارسال خودکار یادآور تمدید برای {$sentCount} بیمه‌نامه",
+                'icon'       => 'app_notifications',
+                'color'      => 'amber',
+                'details'    => [
+                    'sent_count'  => $sentCount,
+                    'target_date' => $targetDate,
+                ],
+            ]);
+        }
+
+        $this->info("تعداد {$sentCount} یادآور تمدید بیمه‌نامه در صف ارسال قرار گرفت.");
 
         return self::SUCCESS;
     }

@@ -31,7 +31,7 @@ class PolicyPolicy
 
     public function delete(User $user, Policy $policy): bool
     {
-        return $user->isAdmin() || $user->hasPermission('delete_users');
+        return $user->isAdmin() || $user->hasPermission('delete_users') || $user->hasPermission('manage_policies');
     }
 
     public function restore(User $user, Policy $policy): bool

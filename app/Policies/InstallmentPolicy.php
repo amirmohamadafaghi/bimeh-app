@@ -11,14 +11,14 @@ class InstallmentPolicy
 {
     public function viewAny(User $user): bool
     {
-        return $user->isAdmin()
-            || $user->hasPermission('manage_installments')
-            || $user->hasPermission('approve_installments');
+        return $user->isAdmin() || $user->hasPermission('manage_installments');
     }
 
     public function view(User $user, Installment $installment): bool
     {
-        return $this->viewAny($user) || $installment->policy?->user_id === $user->id;
+        return $user->isAdmin()
+            || $user->hasPermission('manage_installments')
+            || $installment->policy?->user_id === $user->id;
     }
 
     public function create(User $user): bool
@@ -28,9 +28,7 @@ class InstallmentPolicy
 
     public function update(User $user, Installment $installment): bool
     {
-        return $user->isAdmin()
-            || $user->hasPermission('manage_installments')
-            || $user->hasPermission('approve_installments');
+        return $user->isAdmin() || $user->hasPermission('manage_installments');
     }
 
     public function delete(User $user, Installment $installment): bool

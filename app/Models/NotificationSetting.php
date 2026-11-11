@@ -6,12 +6,11 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Schema;
 
 class NotificationSetting extends Model
 {
-    public const CACHE_KEY = 'bimeh_notification_settings_array_v2';
-
-    protected static ?self $cachedInstance = null;
+    public const CACHE_KEY = 'bimeh_notification_settings_current';
 
     protected $fillable = [
         'reminder_offsets',
@@ -34,49 +33,38 @@ class NotificationSetting extends Model
         ];
     }
 
-    protected static function booted(): void
+    public static function defaultAttributes(): array
     {
-        static::saved(function (): void {
-            static::clearCache();
-        });
+        return [
+            'reminder_offsets'          => [-3, 0, 2, 7],
+            'renewal_days_before'       => 15,
+            'adaptive_timing_enabled'   => true,
+            'birthday_greeting_enabled' => true,
+            'installment_template'      => 'همراه گرامی {name}، قسط بیمه‌نامه شماره {policy_number} به مبلغ {amount} ریال در تاریخ {due_date} سررسید می‌شود. لینک پرداخت: {payment_url}',
+            'overdue_template'          => 'بیمه‌گذار گرامی {name}، قسط بیمه‌نامه شماره {policy_number} به مبلغ {amount} ریال با سررسید {due_date} معوق شده است. لطفاً جهت جلوگیری از تعلیق پوشش بیمه‌ای، از طریق لینک زیر تسویه فرمایید: {payment_url}',
+            'renewal_template'          => 'همراه گرامی {name}، اعتبار بیمه‌نامه شماره {policy_number} در تاریخ {due_date} به پایان می‌رسد. جهت تمدید به موقع با نمایندگی آفاقی تماس بگیرید.',
+            'birthday_template'         => 'زادروزتان خجسته باد {name} عزیز! آرزوی سلامتی، شادی و آرامش برای شما داریم. نمایندگی آفاقی (آفاق بیمه - کد ۳۱۱۶)',
+        ];
+    }
 
-        static::deleted(function (): void {
-            static::clearCache();
+    public static function current(): self
+    {
+        if (Schema::hasTable('notification_settings') === false) {
+            return new self(self::defaultAttributes());
+        }
+
+        return Cache::remember(self::CACHE_KEY, 3600, function (): self {
+            $setting = self::first();
+            if ($setting instanceof self) {
+                return $setting;
+            }
+
+            return self::create(self::defaultAttributes());
         });
     }
 
     public static function clearCache(): void
     {
-        static::$cachedInstance = null;
         Cache::forget(self::CACHE_KEY);
-    }
-
-    public static function current(): self
-    {
-        if (static::$cachedInstance instanceof self) {
-            return static::$cachedInstance;
-        }
-
-        // ذخیره به صورت آرایه خام برای جلوگیری از خطای سریالایز شدن مدل در کش
-        $attributes = Cache::rememberForever(self::CACHE_KEY, function (): array {
-            $record = static::firstOrCreate([], [
-                'reminder_offsets'          => [-3, 0, 2, 7],
-                'renewal_days_before'       => 15,
-                'adaptive_timing_enabled'   => true,
-                'birthday_greeting_enabled' => true,
-                'installment_template'      => "مشتری گرامی {name}، سررسید قسط بیمه‌نامه شماره {policy_number} به مبلغ {amount} ریال در تاریخ {due_date} می‌باشد.\n{payment_url}",
-                'overdue_template'          => "هشدار دیرکرد: مشتری گرامی {name}، قسط بیمه‌نامه {policy_number} به مبلغ {amount} ریال با سررسید {due_date} معوق شده است.\n{payment_url}",
-                'renewal_template'          => "یادآور تمدید: مشتری گرامی {name}، اعتبار بیمه‌نامه شماره {policy_number} در تاریخ {due_date} به پایان می‌رسد.",
-                'birthday_template'         => "زادروزتان مبارک! بیمه‌گذار گرامی {name}، آفاق بیمه سالروز تولد شما را تبریک می‌گوید.",
-            ]);
-
-            return $record->attributesToArray();
-        });
-
-        $instance = new static();
-        $instance->forceFill($attributes);
-        $instance->exists = true;
-
-        return static::$cachedInstance = $instance;
     }
 }

@@ -5,12 +5,13 @@ declare(strict_types=1);
 namespace App\Console\Commands;
 
 use App\Casts\JalaliDateCast;
-use App\Enums\InstallmentStatus;
 use App\Models\Installment;
+use App\Models\NotificationLog;
 use App\Models\NotificationSetting;
 use App\Models\SystemActivity;
 use App\Models\User;
 use App\Services\NotificationDispatcherService;
+use App\Support\PersianNormalizer;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 
@@ -18,48 +19,58 @@ class SendInstallmentReminders extends Command
 {
     protected $signature = 'bimeh:send-installment-reminders';
 
-    protected $description = 'ارسال خودکار اعلان‌های سررسید، دیرکرد اقساط و تبریک تولد بیمه‌گذاران (درون‌برنامه‌ای + ربات بله)';
+    protected $description = 'ارسال هوشمند یادآور اقساط (قبل از سررسید، روز سررسید، پس از سررسید) و تبریک تولد خودکار';
 
     public function handle(NotificationDispatcherService $dispatcher): int
     {
         $settings = NotificationSetting::current();
         $today = Carbon::now('Asia/Tehran')->startOfDay();
-        $offsets = array_map('intval', $settings->reminder_offsets ?: [-3, 0, 2, 7]);
 
-        $sentCount = 0;
-        $birthdayCount = 0;
+        $baseOffsets = (is_array($settings->reminder_offsets) && count($settings->reminder_offsets) > 0)
+            ? array_map('intval', $settings->reminder_offsets)
+            : [-3, 0, 2, 7];
 
-        // ۱. ارسال هوشمند یادآور سررسید و اخطار دیرکرد اقساط
+        $sentReminders = 0;
+
         Installment::with(['policy.user'])
-            ->whereIn('status', [InstallmentStatus::Pending->value, InstallmentStatus::Overdue->value])
-            ->whereNotNull('due_date')
-            ->chunkById(200, function ($installments) use ($dispatcher, $settings, $today, $offsets, &$sentCount): void {
+            ->whereIn('status', ['pending', 'overdue'])
+            ->chunkById(200, function ($installments) use ($dispatcher, $settings, $today, $baseOffsets, &$sentReminders): void {
                 foreach ($installments as $installment) {
                     $user = $installment->policy?->user;
-                    if (! $user || ! $installment->due_date) {
+                    if ($user === null || $installment->due_date === null) {
                         continue;
                     }
 
-                    $diffDays = (int) $installment->due_date->copy()->startOfDay()->diffInDays($today, false);
+                    $dueDate = Carbon::parse($installment->due_date)->timezone('Asia/Tehran')->startOfDay();
+                    $diffDays = (int) $dueDate->diffInDays($today, false);
 
-                    $effectiveOffsets = collect($offsets)->map(function (int $offset) use ($user, $settings): int {
-                        if ($offset < 0 && $settings->adaptive_timing_enabled) {
-                            return $user->getAdaptiveFirstReminderOffset($offset);
+                    $userOffsets = $baseOffsets;
+                    if ($settings->adaptive_timing_enabled) {
+                        $badge = (string) ($user->payment_badge ?? 'normal');
+                        if ($badge === 'good_payer') {
+                            $userOffsets = array_values(array_filter($userOffsets, fn (int $o): bool => $o >= -2));
+                        } elseif ($badge === 'bad_payer') {
+                            if (in_array(-5, $userOffsets, true)) {
+                                // آفست ۵ روز قبل از قبل در آرایه موجود است
+                            } else {
+                                $userOffsets[] = -5;
+                            }
                         }
+                    }
 
-                        return $offset;
-                    })->unique()->values()->all();
-
-                    if (! in_array($diffDays, $effectiveOffsets, true)) {
+                    if (in_array($diffDays, $userOffsets, true) === false) {
                         continue;
                     }
 
-                    $template = $diffDays > 0 ? $settings->overdue_template : $settings->installment_template;
+                    $template = $diffDays > 0
+                        ? (string) $settings->overdue_template
+                        : (string) $settings->installment_template;
+
                     $signedUrl = $installment->generateSignedPaymentUrl();
 
                     $message = $dispatcher->formatTemplate($template, [
                         'name'          => $user->name ?: $user->mobile,
-                        'policy_number' => $installment->policy->policy_number,
+                        'policy_number' => (string) $installment->policy->policy_number,
                         'amount'        => number_format((int) $installment->amount),
                         'due_date'      => $installment->due_date_jalali,
                         'payment_url'   => $signedUrl,
@@ -74,64 +85,94 @@ class SendInstallmentReminders extends Command
                         $signedUrl
                     );
 
-                    if ($log) {
+                    if ($log instanceof NotificationLog) {
+                        $sentReminders++;
+                    }
+                }
+            });
+
+        $sentBirthdays = 0;
+        if ($settings->birthday_greeting_enabled) {
+            $sentBirthdays = $this->sendBirthdayGreetings($dispatcher, $settings, $today);
+        }
+
+        if ($sentReminders > 0 || $sentBirthdays > 0) {
+            SystemActivity::create([
+                'event_type' => 'cron_job_executed',
+                'title'      => 'اجرای خودکار موتور یادآور اقساط و تبریک تولد',
+                'icon'       => 'app_notifications',
+                'color'      => 'emerald',
+                'details'    => [
+                    'sent_reminders' => $sentReminders,
+                    'sent_birthdays' => $sentBirthdays,
+                    'description'    => "یادآور قسط: {$sentReminders} | تبریک تولد: {$sentBirthdays}",
+                ],
+            ]);
+        }
+
+        $this->info("یادآورهای ارسال‌شده: {$sentReminders} | تبریک تولد: {$sentBirthdays}");
+
+        return self::SUCCESS;
+    }
+
+    protected function sendBirthdayGreetings(
+        NotificationDispatcherService $dispatcher,
+        NotificationSetting $settings,
+        Carbon $today
+    ): int {
+        $todayJalaliMonthDay = substr(PersianNormalizer::normalizeText(JalaliDateCast::toJalali($today, 'Y/m/d')), 5, 5);
+        $todayGregorianMonthDay = $today->format('m-d');
+        $jalaliYear = (int) substr(PersianNormalizer::normalizeText(JalaliDateCast::toJalali($today, 'Y/m/d')), 0, 4);
+
+        $sentCount = 0;
+
+        User::whereNotNull('birth_date')
+            ->whereRaw('CHAR_LENGTH(birth_date) > 0')
+            ->chunkById(200, function ($users) use (
+                $dispatcher,
+                $settings,
+                $todayJalaliMonthDay,
+                $todayGregorianMonthDay,
+                $jalaliYear,
+                &$sentCount
+            ): void {
+                foreach ($users as $user) {
+                    $rawBirth = PersianNormalizer::normalizeText(trim((string) $user->birth_date));
+                    if (strlen($rawBirth) < 5) {
+                        continue;
+                    }
+
+                    $normalizedSlash = str_replace('-', '/', $rawBirth);
+                    $birthJalaliStr = JalaliDateCast::toJalali($rawBirth, 'Y/m/d');
+
+                    $isBirthday = str_ends_with($normalizedSlash, $todayJalaliMonthDay)
+                        || str_ends_with($birthJalaliStr, $todayJalaliMonthDay)
+                        || str_ends_with($rawBirth, $todayGregorianMonthDay);
+
+                    if ($isBirthday === false) {
+                        continue;
+                    }
+
+                    $template = (string) ($settings->birthday_template ?: 'زادروزتان خجسته باد {name} عزیز! آرزوی سلامتی و آرامش برای شما داریم. نمایندگی آفاقی (آفاق بیمه)');
+                    $message = $dispatcher->formatTemplate($template, [
+                        'name' => $user->name ?: 'بیمه‌گذار گرامی',
+                    ]);
+
+                    $log = $dispatcher->dispatch(
+                        $user,
+                        'birthday_greeting',
+                        (int) $user->id,
+                        $jalaliYear,
+                        $message,
+                        route('customer.dashboard')
+                    );
+
+                    if ($log instanceof NotificationLog) {
                         $sentCount++;
                     }
                 }
             });
 
-        // ۲. ارسال خودکار تبریک تولد به متولدین امروز
-        if ($settings->birthday_greeting_enabled && ! empty($settings->birthday_template)) {
-            $todayJalaliMonthDay = JalaliDateCast::toJalali($today, 'm/d');
-            $todayGregorianMonthDay = $today->format('m-d');
-            $currentYear = (int) JalaliDateCast::toJalali($today, 'Y');
-
-            User::whereNotNull('birth_date')
-                ->where('birth_date', '!=', '')
-                ->chunkById(200, function ($users) use ($dispatcher, $settings, $todayJalaliMonthDay, $todayGregorianMonthDay, $currentYear, &$birthdayCount): void {
-                    foreach ($users as $user) {
-                        $birthStr = str_replace('-', '/', (string) $user->birth_date);
-                        $isBirthday = str_ends_with($birthStr, $todayJalaliMonthDay)
-                            || str_ends_with((string) $user->birth_date, $todayGregorianMonthDay);
-
-                        if (! $isBirthday) {
-                            continue;
-                        }
-
-                        $msg = $dispatcher->formatTemplate($settings->birthday_template, [
-                            'name' => $user->name ?: 'بیمه‌گذار گرامی',
-                        ]);
-
-                        $log = $dispatcher->dispatch(
-                            $user,
-                            'birthday_greeting',
-                            (int) $user->id,
-                            $currentYear,
-                            $msg,
-                            route('customer.dashboard')
-                        );
-
-                        if ($log) {
-                            $birthdayCount++;
-                        }
-                    }
-                });
-        }
-
-        if ($sentCount > 0 || $birthdayCount > 0) {
-            SystemActivity::create([
-                'event_type' => 'cron_job_executed',
-                'title'      => "اجرای خودکار موتور اعلان: {$sentCount} یادآور قسط و {$birthdayCount} تبریک تولد",
-                'icon'       => 'app_notifications',
-                'color'      => 'indigo',
-                'details'    => [
-                    'description' => "یادآور قسط/معوقات: {$sentCount} مورد | تبریک تولد: {$birthdayCount} مورد",
-                ],
-            ]);
-        }
-
-        $this->info("تعداد {$sentCount} یادآور قسط و {$birthdayCount} تبریک تولد با موفقیت صف‌بندی شد.");
-
-        return self::SUCCESS;
+        return $sentCount;
     }
 }

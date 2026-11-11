@@ -188,9 +188,7 @@ class ExcelImportService
                     $strVal = trim((string) $rawVal);
                 }
 
-                if ($strVal === '') {
-                    // سلول خالی است
-                } else {
+                if (strlen($strVal) > 0) {
                     $hasAnyValue = true;
                 }
                 $rowCells[] = $strVal;
@@ -293,9 +291,7 @@ class ExcelImportService
             $paymentRowType = $this->val($rowData, ['نوع', 'نوع پرداخت']);
 
             if ($this->isValidPolicyNumber($policyNumber, $rowIndexVal)) {
-                if ($currentBlock === null) {
-                    // اولین بلوک بیمه‌نامه
-                } else {
+                if (is_array($currentBlock)) {
                     $policyBlocks[] = $currentBlock;
                 }
                 $currentBlock = [
@@ -446,9 +442,7 @@ class ExcelImportService
                 $policyUpdates['payment_type'] = $paymentType;
                 $policyUpdates['installments_count'] = $installmentsCount;
 
-                if ($policyUpdates === []) {
-                    // بدون تغییر
-                } else {
+                if (count($policyUpdates) > 0) {
                     $currentPolicy->update($policyUpdates);
                 }
             } else {
@@ -506,7 +500,7 @@ class ExcelImportService
                             ->first();
                     }
                     if ($existingInst instanceof Installment) {
-                        // با شناسه پرداخت پیدا شد
+                        // با شناسه پرداخت یافت شد
                     } else {
                         $existingInst = Installment::withTrashed()
                             ->where('policy_id', $currentPolicy->id)
@@ -633,9 +627,7 @@ class ExcelImportService
                     $updates['expires_at'] = $expiresGregorian;
                 }
 
-                if ($updates === []) {
-                    // بدون تغییر
-                } else {
+                if (count($updates) > 0) {
                     $policy->update($updates);
                 }
             } else {
@@ -951,9 +943,7 @@ class ExcelImportService
                 $updates['profile_title'] = $rawProfile;
             }
 
-            if ($updates === []) {
-                // بدون تغییر
-            } else {
+            if (count($updates) > 0) {
                 $user->update($updates);
                 $this->updatedUsers++;
             }
@@ -1119,7 +1109,7 @@ class ExcelImportService
         foreach ($rowData as $key => $val) {
             $str = trim((string) $val);
             if ($str === '' || $str === '--') {
-                // بدون مقدار معتبر
+                // سلول خالی یا خط تیره است
             } else {
                 $hasData = true;
             }
@@ -1130,11 +1120,7 @@ class ExcelImportService
             }
         }
 
-        if ($hasData === true) {
-            return false;
-        }
-
-        return true;
+        return $hasData === false;
     }
 
     private function normalizeJalaliDateString(?string $jalaliDate): ?string
