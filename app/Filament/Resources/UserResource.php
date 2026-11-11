@@ -4,20 +4,22 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources;
 
+use App\Filament\Pages\NotificationSettingsPage;
 use App\Filament\Resources\UserResource\Pages;
 use App\Models\User;
 use Filament\Forms;
 use Filament\Forms\Form;
-use Filament\Forms\Get;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\Hash;
 
 class UserResource extends Resource
 {
     protected static ?string $model = User::class;
 
-    protected static ?string $navigationIcon = 'heroicon-o-users';
+    protected static ?string $navigationIcon = 'app_policyholders';
 
     protected static ?string $navigationLabel = 'بیمه‌گذاران';
 
@@ -27,207 +29,188 @@ class UserResource extends Resource
 
     protected static ?int $navigationSort = 1;
 
-    public static function getFormSchema(): array
-    {
-        return [
-            Forms\Components\Section::make('نقش کاربری و سطح دسترسی در سامانه')
-                ->visible(fn (): bool => auth()->user()?->isAdmin() ?? false)
-                ->schema([
-                    Forms\Components\Select::make('role')
-                        ->label('نقش کاربری')
-                        ->options([
-                            'customer' => 'بیمه‌گذار (مشتری)',
-                            'manager'  => 'منجر (مدیر با دسترسی انتخابی)',
-                            'admin'    => 'ادمین (مدیر ارشد کل سامانه)',
-                        ])
-                        ->default('customer')
-                        ->required()
-                        ->live(),
-
-                    Forms\Components\CheckboxList::make('permissions')
-                        ->label('مجوزهای دسترسی منجر')
-                        ->options(User::availableManagerPermissions())
-                        ->columns(2)
-                        ->visible(fn (Get $get): bool => $get('role') === 'manager')
-                        ->helperText('مشخص کنید این منجر به کدام بخش‌ها و عملیات‌ها دسترسی داشته باشد.'),
-                ])->columns(2),
-
-            Forms\Components\Section::make('مشخصات هویتی و اطلاعات تماس بیمه‌گذار')
-                ->schema([
-                    Forms\Components\TextInput::make('name')
-                        ->label('نام و نام خانوادگی / نام شرکت')
-                        ->required()
-                        ->maxLength(255),
-
-                    Forms\Components\TextInput::make('national_code')
-                        ->label('کد ملی / شناسه ملی')
-                        ->maxLength(15)
-                        ->unique(table: User::class, column: 'national_code', ignoreRecord: true),
-
-                    Forms\Components\TextInput::make('mobile')
-                        ->label('شماره موبایل')
-                        ->required()
-                        ->maxLength(20)
-                        ->unique(table: User::class, column: 'mobile', ignoreRecord: true),
-
-                    Forms\Components\TextInput::make('phone')
-                        ->label('تلفن ثابت')
-                        ->maxLength(20),
-
-                    Forms\Components\Select::make('policyholder_type')
-                        ->label('نوع بیمه‌گذار')
-                        ->options([
-                            'حقیقی' => 'حقیقی',
-                            'حقوقی' => 'حقوقی',
-                        ])
-                        ->default('حقیقی'),
-
-                    Forms\Components\TextInput::make('profile_title')
-                        ->label('پروفایل فروش / طرح اقساط')
-                        ->placeholder('مثال: اعتباری 50-50'),
-
-                    Forms\Components\TextInput::make('birth_date')
-                        ->label('تاریخ تولد شمسی')
-                        ->placeholder('1365/04/15'),
-
-                    Forms\Components\TextInput::make('bale_chat_id')
-                        ->label('شناسه چت بله (bale_chat_id)')
-                        ->placeholder('اتصال خودکار یا ثبت دستی'),
-
-                    Forms\Components\Select::make('payment_badge')
-                        ->label('وضعیت خوش‌حسابی')
-                        ->options([
-                            'none'       => 'عادی',
-                            'good_payer' => 'خوش‌حساب (طلایی)',
-                            'bad_payer'  => 'بدحساب (قرمز)',
-                        ])
-                        ->default('none'),
-
-                    Forms\Components\TextInput::make('password')
-                        ->label('رمز عبور جدید (اختیاری)')
-                        ->password()
-                        ->dehydrated(fn (?string $state): bool => filled($state))
-                        ->required(false),
-
-                    Forms\Components\Textarea::make('address')
-                        ->label('آدرس کامل')
-                        ->rows(2)
-                        ->columnSpanFull(),
-                ])->columns(3),
-        ];
-    }
-
     public static function form(Form $form): Form
     {
-        return $form->schema(static::getFormSchema());
+        return $form
+            ->schema([
+                Forms\Components\Section::make('اطلاعات هویتی و تماس بیمه‌گذار')
+                    ->schema([
+                        Forms\Components\TextInput::make('name')
+                            ->label('نام و نام خانوادگی')
+                            ->required()
+                            ->maxLength(255),
+
+                        Forms\Components\TextInput::make('national_code')
+                            ->label('کد ملی / شناسه ملی')
+                            ->maxLength(20)
+                            ->extraInputAttributes(['dir' => 'ltr']),
+
+                        Forms\Components\TextInput::make('mobile')
+                            ->label('شماره تلفن همراه')
+                            ->required()
+                            ->maxLength(20)
+                            ->extraInputAttributes(['dir' => 'ltr']),
+
+                        Forms\Components\TextInput::make('phone')
+                            ->label('تلفن ثابت')
+                            ->maxLength(20)
+                            ->extraInputAttributes(['dir' => 'ltr']),
+
+                        Forms\Components\TextInput::make('birth_date')
+                            ->label('تاریخ تولد (شمسی، مثال: 1365/04/15)')
+                            ->placeholder('1365/04/15')
+                            ->maxLength(20)
+                            ->extraInputAttributes(['dir' => 'ltr']),
+
+                        Forms\Components\Select::make('policyholder_type')
+                            ->label('نوع بیمه‌گذار')
+                            ->options([
+                                'حقیقی' => 'حقیقی',
+                                'حقوقی' => 'حقوقی',
+                            ])
+                            ->default('حقیقی'),
+
+                        Forms\Components\TextInput::make('profile_title')
+                            ->label('پروفایل / معرف')
+                            ->maxLength(255),
+
+                        Forms\Components\Select::make('payment_badge')
+                            ->label('وضعیت خوش‌حسابی')
+                            ->options([
+                                'good_payer' => 'خوش‌حساب',
+                                'normal'     => 'عادی',
+                                'bad_payer'  => 'بدحساب (دارای معوقه)',
+                            ])
+                            ->default('normal'),
+
+                        Forms\Components\Select::make('role')
+                            ->label('نقش کاربری در سامانه')
+                            ->options([
+                                'customer' => 'بیمه‌گذار (مشتری)',
+                                'manager'  => 'منجر / کارشناس پنل',
+                                'admin'    => 'مدیر کل (Admin)',
+                            ])
+                            ->default('customer')
+                            ->visible(fn (): bool => auth()->user()?->isAdmin() ?? false),
+
+                        Forms\Components\TextInput::make('bale_chat_id')
+                            ->label('شناسه چت ربات بله (bale_chat_id)')
+                            ->maxLength(100)
+                            ->extraInputAttributes(['dir' => 'ltr']),
+
+                        Forms\Components\TextInput::make('password')
+                            ->label('رمز عبور (در صورت خالی بودن در ویرایش، تغییر نمی‌کند)')
+                            ->password()
+                            ->revealable()
+                            ->dehydrateStateUsing(fn ($state): string => Hash::make((string) $state))
+                            ->dehydrated(fn ($state): bool => filled($state))
+                            ->required(fn (string $operation): bool => $operation === 'create'),
+
+                        Forms\Components\Textarea::make('address')
+                            ->label('نشانی محل سکونت / محل کار')
+                            ->rows(2)
+                            ->columnSpanFull(),
+                    ])->columns(3),
+            ]);
     }
 
     public static function table(Table $table): Table
     {
         return $table
-            ->recordUrl(fn (User $record): string => static::getUrl('portfolio', ['record' => $record->getKey()]))
             ->columns([
-                Tables\Columns\TextColumn::make('index')
-                    ->label('ردیف')
-                    ->rowIndex()
-                    ->alignCenter(),
-
                 Tables\Columns\TextColumn::make('name')
                     ->label('نام بیمه‌گذار')
                     ->searchable()
                     ->sortable()
-                    ->weight('bold')
-                    ->limit(28)
-                    ->tooltip(fn (User $record): string => (string) $record->name),
+                    ->weight('bold'),
 
                 Tables\Columns\TextColumn::make('national_code')
                     ->label('کد ملی')
                     ->searchable()
-                    ->copyable()
-                    ->placeholder('—')
-                    ->alignCenter(),
+                    ->copyable(),
 
                 Tables\Columns\TextColumn::make('mobile')
-                    ->label('موبایل')
+                    ->label('شماره موبایل')
                     ->searchable()
-                    ->copyable()
-                    ->alignCenter(),
-
-                Tables\Columns\TextColumn::make('policyholder_type')
-                    ->label('نوع بیمه‌گذار')
-                    ->badge()
-                    ->color(fn (?string $state): string => $state === 'حقوقی' ? 'warning' : 'info')
-                    ->alignCenter(),
+                    ->copyable(),
 
                 Tables\Columns\TextColumn::make('profile_title')
                     ->label('پروفایل')
-                    ->placeholder('—')
-                    ->limit(18)
-                    ->alignCenter(),
+                    ->searchable()
+                    ->toggleable(),
 
                 Tables\Columns\TextColumn::make('policies_count')
-                    ->label('تعداد بیمه‌نامه')
                     ->counts('policies')
+                    ->label('تعداد بیمه‌نامه')
                     ->badge()
-                    ->color('success')
-                    ->alignCenter(),
+                    ->color('info')
+                    ->sortable(),
 
                 Tables\Columns\TextColumn::make('payment_badge')
-                    ->label('وضعیت خوش‌حسابی')
+                    ->label('وضعیت پرداخت')
                     ->badge()
                     ->formatStateUsing(fn (?string $state): string => match ($state) {
-                        'good_payer' => '★ خوش‌حساب',
-                        'bad_payer'  => '▲ بدحساب',
+                        'good_payer' => 'خوش‌حساب',
+                        'bad_payer'  => 'دارای معوقه',
                         default      => 'عادی',
                     })
                     ->color(fn (?string $state): string => match ($state) {
-                        'good_payer' => 'warning',
+                        'good_payer' => 'success',
                         'bad_payer'  => 'danger',
                         default      => 'gray',
-                    })
-                    ->alignCenter(),
+                    }),
+
+                Tables\Columns\TextColumn::make('bale_chat_id')
+                    ->label('ربات بله')
+                    ->badge()
+                    ->formatStateUsing(fn ($state): string => filled($state) ? 'متصل' : 'غیرمتصل')
+                    ->color(fn ($state): string => filled($state) ? 'success' : 'gray'),
             ])
+            ->defaultSort('id', 'desc')
+            ->recordUrl(fn (User $record): string => static::getUrl('portfolio', ['record' => $record]))
             ->filters([
-                Tables\Filters\SelectFilter::make('policyholder_type')
-                    ->label('نوع بیمه‌گذار')
-                    ->options([
-                        'حقیقی' => 'حقیقی',
-                        'حقوقی' => 'حقوقی',
-                    ]),
                 Tables\Filters\SelectFilter::make('payment_badge')
                     ->label('وضعیت خوش‌حسابی')
                     ->options([
                         'good_payer' => 'خوش‌حساب',
-                        'bad_payer'  => 'بدحساب',
-                        'none'       => 'عادی',
+                        'normal'     => 'عادی',
+                        'bad_payer'  => 'دارای معوقه',
                     ]),
-                Tables\Filters\TrashedFilter::make()
-                    ->label('سطل زباله (حذف‌شده‌ها)'),
+                Tables\Filters\SelectFilter::make('role')
+                    ->label('نقش کاربری')
+                    ->options([
+                        'customer' => 'بیمه‌گذار',
+                        'manager'  => 'منجر',
+                        'admin'    => 'مدیر کل',
+                    ]),
             ])
             ->actions([
                 Tables\Actions\Action::make('portfolio')
-                    ->label('مشاهده پرونده')
-                    ->icon('heroicon-o-eye')
-                    ->color('info')
-                    ->iconButton()
-                    ->tooltip('مشاهده و ویرایش پرونده بیمه‌گذار')
-                    ->url(fn (User $record): string => static::getUrl('portfolio', ['record' => $record->getKey()])),
+                    ->label('پرونده جامع')
+                    ->icon('app_more_details')
+                    ->color('primary')
+                    ->url(fn (User $record): string => static::getUrl('portfolio', ['record' => $record])),
+
+                Tables\Actions\EditAction::make()
+                    ->icon('app_edit'),
 
                 Tables\Actions\DeleteAction::make()
-                    ->icon('heroicon-o-trash')
-                    ->iconButton()
-                    ->tooltip('انتقال به سطل زباله'),
-
-                Tables\Actions\RestoreAction::make()
-                    ->iconButton(),
+                    ->icon('app_delete'),
             ])
             ->bulkActions([
                 Tables\Actions\BulkActionGroup::make([
+                    Tables\Actions\BulkAction::make('send_custom_notification')
+                        ->label('ارسال پیام اختصاصی به انتخاب‌شده‌ها')
+                        ->icon('app_notifications')
+                        ->color('info')
+                        ->action(function (Collection $records) {
+                            $ids = $records->pluck('id')->implode(',');
+
+                            return redirect()->to(NotificationSettingsPage::getUrl(['users' => $ids]) . '#custom-message-section');
+                        }),
                     Tables\Actions\DeleteBulkAction::make(),
-                    Tables\Actions\RestoreBulkAction::make(),
                 ]),
-            ])
-            ->defaultPaginationPageOption(10);
+            ]);
     }
 
     public static function getPages(): array
@@ -235,8 +218,8 @@ class UserResource extends Resource
         return [
             'index'     => Pages\ListUsers::route('/'),
             'create'    => Pages\CreateUser::route('/create'),
+            'edit'      => Pages\EditUser::route('/{record}/edit'),
             'portfolio' => Pages\ViewUserPortfolio::route('/{record}/portfolio'),
-            'edit'      => Pages\ViewUserPortfolio::route('/{record}/edit'),
         ];
     }
 }

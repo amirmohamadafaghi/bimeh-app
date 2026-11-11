@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Database\Factories;
 
 use App\Models\Insurer;
@@ -15,19 +17,19 @@ class PolicyFactory extends Factory
     public function definition(): array
     {
         return [
-            'user_id' => User::factory(),
-            'insurer_id' => Insurer::factory(),
-            'policy_number' => '1405/314/60020/'.fake()->unique()->numerify('####'),
-            'title' => 'ثالث - سواری پژو 405',
+            'user_id'            => User::factory(),
+            'insurer_id'         => Insurer::factory(),
+            'policy_number'      => '1405/3116/' . $this->faker->unique()->numerify('######'),
+            'title'              => 'ثالث - پژو 206',
             'insurance_category' => 'ثالث',
-            'vehicle_name' => 'سواری پژو 405',
-            'plate_number' => '82ط867 ایران52',
-            'vehicle_model' => '1398',
-            'total_amount' => 60000000,
-            'initial_payment' => 20000000,
-            'issued_at' => now('Asia/Tehran')->subMonth()->toDateString(),
-            'expires_at' => now('Asia/Tehran')->addMonths(11)->toDateString(),
-            'status' => 'active',
+            'vehicle_name'       => 'پژو 206',
+            'total_amount'       => 120000000,
+            'initial_payment'    => 20000000,
+            'paid_amount'        => 20000000,
+            'payment_type'       => 'installment',
+            'installments_count' => 5,
+            'issued_at'          => now('Asia/Tehran')->toDateString(),
+            'expires_at'         => now('Asia/Tehran')->addYear()->toDateString(),
         ];
     }
 }

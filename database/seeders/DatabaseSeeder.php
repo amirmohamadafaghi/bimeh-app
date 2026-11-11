@@ -9,55 +9,45 @@ use App\Models\NotificationSetting;
 use App\Models\User;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Schema;
 
 class DatabaseSeeder extends Seeder
 {
     public function run(): void
     {
-        $userColumns = Schema::getColumnListing('users');
+        $adminNationalCode = (string) env('ADMIN_DEFAULT_NATIONAL_CODE', '0000000000');
+        $adminMobile = (string) env('ADMIN_DEFAULT_MOBILE', '09120000000');
 
-        // ۱. ایجاد یا بروزرسانی حساب مدیر ارشد اصلی سامانه (ورود با کد ملی و رمز موبایل)
-        $superAdminData = [
-            'name'                        => 'مدیر سیستم آفاق بیمه',
-            'national_code'               => '0859844145',
-            'mobile'                      => '09152687500',
-            'email'                       => 'admin@afaghbimeh.ir',
-            'password'                    => Hash::make('09152687500'),
-            'role'                        => 'admin',
-            'policyholder_type'           => 'حقیقی',
-            'payment_badge'               => 'good_payer',
-            'preferred_notification_hour' => 10,
-        ];
+        $existingAdmin = User::withTrashed()
+            ->where('national_code', $adminNationalCode)
+            ->first();
 
-        User::updateOrCreate(
-            ['national_code' => $superAdminData['national_code']],
-            array_intersect_key($superAdminData, array_flip($userColumns))
+        if ($existingAdmin instanceof User) {
+            if ($existingAdmin->trashed()) {
+                $existingAdmin->restore();
+            }
+            $existingAdmin->update([
+                'role' => 'admin',
+            ]);
+        } else {
+            User::create([
+                'name'          => 'مدیریت آفاق بیمه (نمایندگی ۳۱۱۶)',
+                'national_code' => $adminNationalCode,
+                'mobile'        => $adminMobile,
+                'password'      => Hash::make($adminMobile),
+                'role'          => 'admin',
+                'payment_badge' => 'good_payer',
+            ]);
+        }
+
+        Insurer::firstOrCreate(
+            ['name' => 'بیمه ایران'],
+            [
+                'code'         => '3116',
+                'service_type' => 'ثالث، بدنه، آتش‌سوزی، مسئولیت و درمان',
+                'is_active'    => true,
+            ]
         );
 
-        // ۲. ایجاد شرکت‌های بیمه پایه
-        if (Schema::hasTable('insurers')) {
-            $insurerColumns = Schema::getColumnListing('insurers');
-            $insurers = [
-                ['name' => 'بیمه ایران', 'code' => 'IRAN', 'is_active' => true],
-                ['name' => 'بیمه آسیا', 'code' => 'ASIA', 'is_active' => true],
-                ['name' => 'بیمه البرز', 'code' => 'ALBORZ', 'is_active' => true],
-                ['name' => 'بیمه دانا', 'code' => 'DANA', 'is_active' => true],
-                ['name' => 'بیمه پاسارگاد', 'code' => 'PASARGAD', 'is_active' => true],
-                ['name' => 'بیمه پارسیان', 'code' => 'PARSIAN', 'is_active' => true],
-            ];
-
-            foreach ($insurers as $insurerData) {
-                Insurer::updateOrCreate(
-                    ['name' => $insurerData['name']],
-                    array_intersect_key($insurerData, array_flip($insurerColumns))
-                );
-            }
-        }
-
-        // ۳. ایجاد سطر پیش‌فرض تنظیمات اعلان‌ها
-        if (Schema::hasTable('notification_settings')) {
-            NotificationSetting::current();
-        }
+        NotificationSetting::current();
     }
 }

@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Database\Factories;
 
 use App\Models\Insurer;
@@ -13,7 +15,10 @@ class InsurerFactory extends Factory
     public function definition(): array
     {
         return [
-            'name' => 'بیمه ایران - '.fake()->unique()->numerify('###'),
+            'name'         => 'بیمه ایران - ' . $this->faker->unique()->numerify('###'),
+            'code'         => '3116',
+            'service_type' => 'ثالث و بدنه',
+            'is_active'    => true,
         ];
     }
 }

@@ -11,7 +11,6 @@ use App\Models\Installment;
 use App\Models\NotificationLog;
 use App\Models\NotificationSetting;
 use App\Models\Policy;
-use App\Models\User;
 use App\Services\NotificationDispatcherService;
 use Filament\Actions;
 use Filament\Notifications\Notification;

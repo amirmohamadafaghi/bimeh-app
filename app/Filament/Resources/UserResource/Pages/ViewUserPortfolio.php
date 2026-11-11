@@ -683,4 +683,4 @@ class ViewUserPortfolio extends Page
             'lastUpdatedJalali'      => JalaliDateCast::toJalali($user->updated_at, 'Y/m/d H:i'),
         ];
     }
-}
+}بل

@@ -14,9 +14,13 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        $middleware->web(append: [
-            SecurityHeadersMiddleware::class,
+        $middleware->validateCsrfTokens(except: [
+            'webhook/bale',
+            'webhook/bale/*',
         ]);
+
+        $middleware->append(SecurityHeadersMiddleware::class);
+        $middleware->redirectGuestsTo(fn (): string => route('customer.login'));
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

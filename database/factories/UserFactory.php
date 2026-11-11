@@ -1,48 +1,32 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Database\Factories;
 
 use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Str;
 
 /**
  * @extends Factory<User>
  */
 class UserFactory extends Factory
 {
-    protected static ?string $password;
+    protected static ?string $password = null;
 
     public function definition(): array
     {
+        $mobile = '0912' . $this->faker->unique()->numerify('#######');
+
         return [
-            'name' => fake()->name(),
-            'national_code' => fake()->unique()->numerify('085#######'),
-            'mobile' => fake()->unique()->numerify('0915#######'),
-            'email' => fake()->unique()->safeEmail(),
-            'email_verified_at' => now(),
-            'password' => static::$password ??= Hash::make('password'),
-            'role' => 'customer',
+            'name'              => $this->faker->name(),
+            'national_code'     => $this->faker->unique()->numerify('##########'),
+            'mobile'            => $mobile,
             'policyholder_type' => 'حقیقی',
-            'payment_badge' => 'none',
-            'preferred_notification_hour' => 10,
-            'remember_token' => Str::random(10),
+            'password'          => static::$password ??= Hash::make('password'),
+            'role'              => 'customer',
+            'payment_badge'     => 'normal',
         ];
-    }
-
-    public function admin(): static
-    {
-        return $this->state(fn (array $attributes) => [
-            'role' => 'admin',
-        ]);
-    }
-
-    public function manager(array $permissions = []): static
-    {
-        return $this->state(fn (array $attributes) => [
-            'role' => 'manager',
-            'permissions' => $permissions,
-        ]);
     }
 }

@@ -10,50 +10,61 @@ return new class extends Migration
 {
     public function up(): void
     {
-        // ۱. اطمینان از وجود ستون‌های تکمیلی در جدول users
-        Schema::table('users', function (Blueprint $table) {
-            if (! Schema::hasColumn('users', 'address')) {
-                $table->text('address')->nullable()->after('mobile');
-            }
-            if (! Schema::hasColumn('users', 'gender')) {
-                $table->string('gender', 20)->nullable()->after('mobile');
-            }
-            if (! Schema::hasColumn('users', 'birth_date')) {
-                $table->string('birth_date', 20)->nullable()->after('gender');
-            }
-        });
+        if (Schema::hasTable('users')) {
+            Schema::table('users', function (Blueprint $table): void {
+                if (Schema::hasColumn('users', 'address') === false) {
+                    $table->text('address')->nullable()->after('mobile');
+                }
+                if (Schema::hasColumn('users', 'phone') === false) {
+                    $table->string('phone', 30)->nullable()->after('mobile');
+                }
+                if (Schema::hasColumn('users', 'policyholder_type') === false) {
+                    $table->string('policyholder_type', 30)->nullable()->default('حقیقی')->after('name');
+                }
+                if (Schema::hasColumn('users', 'profile_title') === false) {
+                    $table->string('profile_title')->nullable()->after('policyholder_type');
+                }
+            });
+        }
 
-        // ۲. اطمینان از وجود تمام ستون‌های مالی و اقساطی در جدول policies (رفع باگ شرط total_amount)
-        Schema::table('policies', function (Blueprint $table) {
-            if (! Schema::hasColumn('policies', 'policyholder_type')) {
-                $table->string('policyholder_type')->nullable()->default('حقیقی')->after('insurance_category');
-            }
-            if (! Schema::hasColumn('policies', 'profile_title')) {
-                $table->string('profile_title')->nullable()->after('driver_no_claim_years');
-            }
-            if (! Schema::hasColumn('policies', 'initial_payment')) {
-                $table->unsignedBigInteger('initial_payment')->default(0)->after('total_amount');
-            }
-            if (! Schema::hasColumn('policies', 'paid_amount')) {
-                $table->unsignedBigInteger('paid_amount')->default(0)->after('initial_payment');
-            }
-            if (! Schema::hasColumn('policies', 'payment_type')) {
-                $table->string('payment_type', 30)->default('installment')->after('paid_amount');
-            }
-            if (! Schema::hasColumn('policies', 'down_payment')) {
-                $table->unsignedBigInteger('down_payment')->default(0)->after('payment_type');
-            }
-            if (! Schema::hasColumn('policies', 'installments_count')) {
-                $table->unsignedInteger('installments_count')->default(0)->after('down_payment');
-            }
-            if (! Schema::hasColumn('policies', 'first_due_date')) {
-                $table->date('first_due_date')->nullable()->after('installments_count');
-            }
-        });
+        if (Schema::hasTable('policies')) {
+            Schema::table('policies', function (Blueprint $table): void {
+                if (Schema::hasColumn('policies', 'started_at') === false) {
+                    $table->date('started_at')->nullable()->after('profile_title');
+                }
+                if (Schema::hasColumn('policies', 'started_at_jalali') === false) {
+                    $table->string('started_at_jalali', 20)->nullable()->after('started_at');
+                }
+                if (Schema::hasColumn('policies', 'issued_at_jalali') === false) {
+                    $table->string('issued_at_jalali', 20)->nullable()->after('issued_at');
+                }
+                if (Schema::hasColumn('policies', 'expires_at_jalali') === false) {
+                    $table->string('expires_at_jalali', 20)->nullable()->after('expires_at');
+                }
+                if (Schema::hasColumn('policies', 'driver_no_claim_years') === false) {
+                    $table->string('driver_no_claim_years', 20)->nullable()->after('no_claim_years');
+                }
+                if (Schema::hasColumn('policies', 'policyholder_type') === false) {
+                    $table->string('policyholder_type', 30)->nullable()->default('حقیقی')->after('insurance_category');
+                }
+            });
+        }
+
+        if (Schema::hasTable('installments')) {
+            Schema::table('installments', function (Blueprint $table): void {
+                if (Schema::hasColumn('installments', 'due_date_jalali') === false) {
+                    $table->string('due_date_jalali', 20)->nullable()->after('due_date');
+                }
+            });
+        }
     }
 
     public function down(): void
     {
-        //
+        if (Schema::hasTable('users') && Schema::hasColumn('users', 'address')) {
+            Schema::table('users', function (Blueprint $table): void {
+                $table->dropColumn('address');
+            });
+        }
     }
 };

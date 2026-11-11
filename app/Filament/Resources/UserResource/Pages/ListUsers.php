@@ -4,14 +4,15 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources\UserResource\Pages;
 
+use App\Filament\Pages\ManageAdminPermissions;
 use App\Filament\Resources\UserResource;
-use App\Models\SystemActivity;
 use App\Services\ExcelImportService;
 use Filament\Actions;
 use Filament\Forms;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\ListRecords;
 use Illuminate\Support\Facades\Storage;
+use Throwable;
 
 class ListUsers extends ListRecords
 {
@@ -20,64 +21,59 @@ class ListUsers extends ListRecords
     protected function getHeaderActions(): array
     {
         return [
-            Actions\CreateAction::make()
-                ->label('افزودن بیمه‌گذار جدید')
-                ->icon('heroicon-o-user-plus'),
+            Actions\Action::make('manage_permissions')
+                ->label('مدیریت اختیارات مدیران')
+                ->icon('app_admin')
+                ->color('gray')
+                ->visible(fn (): bool => auth()->user()?->isAdmin() ?? false)
+                ->url(fn (): string => ManageAdminPermissions::getUrl()),
 
-            Actions\Action::make('importExcel')
-                ->label('ایمپورت فایل اکسل جامع')
-                ->icon('heroicon-o-arrow-up-tray')
-                ->color('success')
+            Actions\Action::make('import_excel')
+                ->label('آپلود و همگام‌سازی اکسل')
+                ->icon('app_upload_file')
+                ->color('info')
+                ->visible(fn (): bool => auth()->user()?->isAdmin() || (auth()->user()?->hasPermission('import_excel') ?? false))
                 ->form([
                     Forms\Components\FileUpload::make('excel_file')
-                        ->label('انتخاب فایل اکسل (.xls یا .xlsx یا .csv)')
+                        ->label('فایل اکسل گزارش صدور، بیمه‌نامه‌ها یا اقساط (.xls / .xlsx / .csv)')
                         ->disk('local')
                         ->directory('imports')
                         ->required(),
                 ])
                 ->action(function (array $data, ExcelImportService $importService): void {
-                    // افزایش محدودیت زمان و حافظه برای فایل‌های بسیار حجیم روی cPanel
-                    @set_time_limit(0);
-                    @ini_set('memory_limit', '512M');
+                    $filePath = (string) ($data['excel_file'] ?? '');
+                    $fullPath = Storage::disk('local')->path($filePath);
 
-                    $relativePath = (string) ($data['excel_file'] ?? '');
-                    $fullPath = Storage::disk('local')->path($relativePath);
+                    if (empty($filePath) || file_exists($fullPath) === false) {
+                        Notification::make()
+                            ->title('فایل آپلودشده یافت نشد.')
+                            ->danger()
+                            ->send();
+
+                        return;
+                    }
 
                     try {
-                        $stats = $importService->import($fullPath);
-
-                        SystemActivity::create([
-                            'actor_id'   => auth()->id(),
-                            'event_type' => 'excel_imported',
-                            'title'      => 'ایمپورت موفق فایل اکسل بیمه‌گذاران و اقساط',
-                            'icon'       => 'app_upload_file',
-                            'color'      => 'emerald',
-                            'details'    => $stats,
-                        ]);
+                        $result = $importService->import($fullPath);
+                        @unlink($fullPath);
 
                         Notification::make()
-                            ->title('ایمپورت اکسل با موفقیت انجام شد.')
-                            ->body(sprintf(
-                                'کاربران: %d | بیمه‌نامه‌ها: %d | اقساط: %d',
-                                $stats['users_processed'] ?? ($stats['users'] ?? 0),
-                                $stats['policies_processed'] ?? ($stats['policies'] ?? 0),
-                                $stats['installments_processed'] ?? ($stats['installments'] ?? 0)
-                            ))
+                            ->title('همگام‌سازی اکسل با موفقیت انجام شد')
+                            ->body("بیمه‌گذاران جدید: {$result['new_users_count']} | تکمیل‌شده: {$result['updated_users_count']} | بیمه‌نامه‌ها: {$result['policies_processed']} | اقساط: {$result['installments_processed']}")
                             ->success()
                             ->send();
-                    } catch (\Throwable $e) {
+                    } catch (Throwable $e) {
                         Notification::make()
                             ->title('خطا در پردازش فایل اکسل')
                             ->body($e->getMessage())
                             ->danger()
                             ->send();
-                    } finally {
-                        // حذف قطعی فایل اکسل از دیسک سرور برای حفظ امنیت اطلاعات مشتریان
-                        if ($relativePath !== '' && Storage::disk('local')->exists($relativePath)) {
-                            Storage::disk('local')->delete($relativePath);
-                        }
                     }
                 }),
+
+            Actions\CreateAction::make()
+                ->label('افزودن بیمه‌گذار جدید')
+                ->icon('heroicon-o-plus'),
         ];
     }
 }

@@ -5,12 +5,11 @@ declare(strict_types=1);
 namespace App\Filament\Resources\InstallmentResource\Pages;
 
 use App\Filament\Resources\InstallmentResource;
-use App\Services\ExcelImportService;
+use App\Models\Installment;
 use Filament\Actions;
-use Filament\Forms;
-use Filament\Notifications\Notification;
+use Filament\Resources\Components\Tab;
 use Filament\Resources\Pages\ListRecords;
-use Illuminate\Support\Facades\Storage;
+use Illuminate\Database\Eloquent\Builder;
 
 class ListInstallments extends ListRecords
 {
@@ -19,52 +18,32 @@ class ListInstallments extends ListRecords
     protected function getHeaderActions(): array
     {
         return [
-            Actions\CreateAction::make(),
+            Actions\CreateAction::make()
+                ->label('ثبت قسط جدید')
+                ->icon('heroicon-o-plus'),
+        ];
+    }
 
-            Actions\Action::make('importExcel')
-                ->label('ایمپورت فایل اکسل اقساط / بیمه‌نامه‌ها')
-                ->icon('heroicon-o-arrow-up-tray')
-                ->color('success')
-                ->visible(fn (): bool => (auth()->user()?->isAdmin() ?? false) || (auth()->user()?->hasPermission('import_excel') ?? false))
-                ->form([
-                    Forms\Components\FileUpload::make('excel_file')
-                        ->label('انتخاب فایل اکسل (.xls یا .xlsx یا .csv)')
-                        ->disk('local')
-                        ->directory('imports')
-                        ->required(),
-                ])
-                ->action(function (array $data, ExcelImportService $importService): void {
-                    @set_time_limit(0);
-                    @ini_set('memory_limit', '512M');
+    public function getTabs(): array
+    {
+        return [
+            'all' => Tab::make('همه اقساط'),
 
-                    $relativePath = (string) ($data['excel_file'] ?? '');
-                    $fullPath = Storage::disk('local')->path($relativePath);
+            'awaiting_approval' => Tab::make('منتظر تایید ادمین')
+                ->badge(Installment::where('status', 'awaiting_approval')->count())
+                ->badgeColor('info')
+                ->modifyQueryUsing(fn (Builder $query): Builder => $query->where('status', 'awaiting_approval')),
 
-                    try {
-                        $stats = $importService->import($fullPath);
+            'overdue' => Tab::make('اقساط معوق')
+                ->badge(Installment::where('status', 'overdue')->count())
+                ->badgeColor('danger')
+                ->modifyQueryUsing(fn (Builder $query): Builder => $query->where('status', 'overdue')),
 
-                        Notification::make()
-                            ->title('همگام‌سازی فایل اکسل با موفقیت انجام شد.')
-                            ->body(sprintf(
-                                'کاربران: %d | بیمه‌نامه‌ها: %d | اقساط: %d',
-                                $stats['users_processed'] ?? 0,
-                                $stats['policies_processed'] ?? 0,
-                                $stats['installments_processed'] ?? 0
-                            ))
-                            ->success()
-                            ->send();
-                    } catch (\Throwable $e) {
-                        Notification::make()
-                            ->title('خطا در پردازش فایل اکسل')
-                            ->body($e->getMessage())
-                            ->danger()
-                            ->send();
-                    } finally {
-                        if ($relativePath !== '' && Storage::disk('local')->exists($relativePath)) {
-                            Storage::disk('local')->delete($relativePath);
-                        }
-                    }
-                }),
+            'pending' => Tab::make('در انتظار پرداخت')
+                ->modifyQueryUsing(fn (Builder $query): Builder => $query->where('status', 'pending')),
+
+            'paid' => Tab::make('پرداخت شده')
+                ->modifyQueryUsing(fn (Builder $query): Builder => $query->where('status', 'paid')),
         ];
     }
 }

@@ -1,56 +1,31 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Filament\Resources\UserResource\Pages;
 
 use App\Filament\Resources\UserResource;
-use Filament\Actions\Action;
+use App\Support\PersianNormalizer;
+use Filament\Actions;
 use Filament\Resources\Pages\EditRecord;
-use Illuminate\Contracts\Support\Htmlable;
 
 class EditUser extends EditRecord
 {
     protected static string $resource = UserResource::class;
 
-    public function getBreadcrumbs(): array
-    {
-        return [];
-    }
-
-    public function getTitle(): string|Htmlable
-    {
-        return 'ویرایش پرونده بیمه‌گذار: '.$this->record->name;
-    }
-
     protected function getHeaderActions(): array
     {
-        return [];
+        return [
+            Actions\DeleteAction::make(),
+        ];
     }
 
-    protected function getSaveFormAction(): Action
+    protected function mutateFormDataBeforeSave(array $data): array
     {
-        return Action::make('save')
-            ->label('تأیید')
-            ->icon('heroicon-o-check-circle')
-            ->color('success')
-            ->requiresConfirmation()
-            ->modalHeading('تأیید ثبت تغییرات')
-            ->modalDescription('این اطلاعات قرار است ثبت شود؛ آیا از ثبت اطلاعات فعلی مطمئن هستید؟')
-            ->modalSubmitActionLabel('تأیید')
-            ->modalCancelActionLabel('لغو')
-            ->action(fn () => $this->save());
-    }
+        $data['name'] = PersianNormalizer::normalizeText($data['name'] ?? '');
+        $data['national_code'] = PersianNormalizer::cleanNationalCode($data['national_code'] ?? '') ?: null;
+        $data['mobile'] = PersianNormalizer::cleanMobile($data['mobile'] ?? '');
 
-    protected function getCancelFormAction(): Action
-    {
-        return Action::make('cancel')
-            ->label('لغو و بازگشت')
-            ->icon('heroicon-o-x-mark')
-            ->color('gray')
-            ->url($this->getResource()::getUrl('index'));
-    }
-
-    protected function getRedirectUrl(): string
-    {
-        return $this->getResource()::getUrl('index');
+        return $data;
     }
 }
