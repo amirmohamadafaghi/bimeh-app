@@ -44,21 +44,21 @@ class CustomerAuthController extends Controller
             ->when(strlen($trimmedCode) >= 8, fn ($q) => $q->orWhere('national_code', $trimmedCode))
             ->first();
 
-        $isValid = $user && (
+        $isValid = ($user instanceof User) && (
             $user->mobile === $mobileInput ||
             Hash::check($mobileInput, (string) $user->password)
         );
 
-        if (! $isValid) {
-            throw ValidationException::withMessages([
-                'national_code' => 'کد ملی یا شماره موبایل وارد شده در سامانه یافت نشد.',
-            ]);
+        if ($isValid === true) {
+            Auth::login($user, $request->boolean('remember'));
+            $request->session()->regenerate();
+
+            return redirect()->intended(route('customer.dashboard'));
         }
 
-        Auth::login($user, $request->boolean('remember'));
-        $request->session()->regenerate();
-
-        return redirect()->intended(route('customer.dashboard'));
+        throw ValidationException::withMessages([
+            'national_code' => 'کد ملی یا شماره موبایل وارد شده در سامانه یافت نشد.',
+        ]);
     }
 
     public function logout(Request $request): RedirectResponse

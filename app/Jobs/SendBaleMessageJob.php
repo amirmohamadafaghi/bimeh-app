@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Jobs;
 
 use App\Models\NotificationLog;
@@ -36,25 +38,25 @@ class SendBaleMessageJob implements ShouldQueue
     public function handle(BaleBotService $baleService): void
     {
         $log = NotificationLog::with('user')->find($this->notificationLogId);
-        if (! $log || $log->status === 'sent') {
+        if ($log === null || $log->status === 'sent') {
             return;
         }
 
         try {
             $baleService->sendMessage(
                 $log->user?->bale_chat_id,
-                $log->message,
+                (string) $log->message,
                 $this->signedPaymentUrl
             );
 
             $log->update([
-                'status' => 'sent',
+                'status'        => 'sent',
                 'error_message' => null,
-                'sent_at' => now(),
+                'sent_at'       => now(),
             ]);
         } catch (Throwable $e) {
             $log->update([
-                'status' => 'failed',
+                'status'        => 'failed',
                 'error_message' => $e->getMessage(),
             ]);
 

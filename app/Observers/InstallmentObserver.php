@@ -7,6 +7,8 @@ namespace App\Observers;
 use App\Filament\Widgets\RecentChangesWidget;
 use App\Models\Installment;
 use App\Models\InstallmentAudit;
+use App\Models\Policy;
+use App\Models\User;
 use App\Services\ActivityLoggerService;
 use Illuminate\Support\Facades\Auth;
 
@@ -55,7 +57,7 @@ class InstallmentObserver
             $this->evaluateCustomerBadge($installment);
 
             $policy = $installment->policy()->with('user')->first();
-            if ($policy) {
+            if ($policy instanceof Policy) {
                 $customerName = $policy->user?->name ?: ($policy->user?->mobile ?: 'بیمه‌گذار');
                 $statusLabel = match ($installment->status) {
                     'paid'              => 'وصول نهایی شد',
@@ -66,7 +68,7 @@ class InstallmentObserver
 
                 ActivityLoggerService::logPolicyOrInstallmentUpdate(
                     title: "قسط شماره {$installment->installment_number} ({$customerName}) — {$statusLabel}",
-                    customerName: $customerName,
+                    customerName: (string) $customerName,
                     policyNumber: (string) $policy->policy_number,
                     statusText: $statusLabel,
                     amountFormatted: number_format((int) $installment->amount) . ' ریال'
@@ -89,7 +91,7 @@ class InstallmentObserver
         $user = Auth::user();
         $actorType = app()->runningInConsole()
             ? 'command'
-            : ($user && $user->canAccessPanel(filament()->getDefaultPanel()) ? 'admin' : 'customer');
+            : (($user instanceof User && $user->canAccessPanel(filament()->getDefaultPanel())) ? 'admin' : 'customer');
 
         InstallmentAudit::create([
             'installment_id' => $installment->id,
@@ -107,7 +109,7 @@ class InstallmentObserver
     protected function evaluateCustomerBadge(Installment $installment): void
     {
         $policy = $installment->policy()->with('user')->first();
-        if (! $policy || ! $policy->user) {
+        if ($policy === null || $policy->user === null) {
             return;
         }
 

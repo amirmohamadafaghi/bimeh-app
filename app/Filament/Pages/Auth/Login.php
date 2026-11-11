@@ -52,7 +52,7 @@ class Login extends BaseLogin
 
     protected function getMobilePasswordFormComponent(): Component
     {
-        return TextInput::make('mobile') // این فیلد در اصل همان فیلد رمز عبور است
+        return TextInput::make('mobile')
             ->label('رمز عبور')
             ->password()
             ->revealable()
@@ -66,6 +66,7 @@ class Login extends BaseLogin
             $this->rateLimit(5);
         } catch (TooManyRequestsException $exception) {
             $this->getRateLimitedNotification($exception)?->send();
+
             return null;
         }
 
@@ -75,16 +76,15 @@ class Login extends BaseLogin
 
         $user = User::where('national_code', $nationalCode)->first();
 
-        // اصلاحیه امنیتی: ادمین فقط باید با رمز عبور هش‌شده وارد شود
-        $isValid = $user && Hash::check($passwordInput, (string) $user->password);
+        $isValid = ($user instanceof User) && Hash::check($passwordInput, (string) $user->password);
 
-        if (! $isValid) {
+        if ($isValid === false) {
             $this->throwFailureValidationException();
         }
 
         $panel = Filament::getCurrentPanel();
 
-        if (($user instanceof FilamentUser) && (! $user->canAccessPanel($panel))) {
+        if (($user instanceof FilamentUser) && ($user->canAccessPanel($panel) === false)) {
             $this->throwFailureValidationException();
         }
 

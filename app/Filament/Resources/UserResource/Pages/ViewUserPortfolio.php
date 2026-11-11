@@ -32,23 +32,18 @@ class ViewUserPortfolio extends Page
 
     protected static string $view = 'filament.resources.user-resource.view-user-portfolio';
 
-    // وضعیت تب فعال: policies | installments | history
     public string $activeTab = 'policies';
 
-    // فیلترها و جستجوی تب ۱: بیمه‌نامه‌ها
     public string $policySearch = '';
-    public string $policyStatusFilter = 'all'; // all | active | expiring_soon | expired
-    public string $policyPaymentFilter = 'all'; // all | cash | installment
+    public string $policyStatusFilter = 'all';
+    public string $policyPaymentFilter = 'all';
 
-    // فیلترها و جستجوی تب ۲: اقساط مالی
     public string $installmentSearch = '';
-    public string $installmentStatusFilter = 'all'; // all | overdue | pending | awaiting_approval | paid
-    public string $installmentSort = 'due_date_asc'; // due_date_asc | due_date_desc | amount_desc | number_asc
+    public string $installmentStatusFilter = 'all';
+    public string $installmentSort = 'due_date_asc';
 
-    // فیلتر تب ۳: تاریخچه و ارتباطات
-    public string $historyFilter = 'all'; // all | notifications | audits
+    public string $historyFilter = 'all';
 
-    // وضعیت ویرایش مشخصات بیمه‌گذار
     public bool $isEditing = false;
     public array $editData = [
         'name'              => '',
@@ -64,11 +59,9 @@ class ViewUserPortfolio extends Page
         'new_password'      => '',
     ];
 
-    // مودال مشاهده جزئیات کامل بیمه‌نامه
     public bool $showPolicyDetailModal = false;
     public ?int $viewingPolicyId = null;
 
-    // مودال ثبت / ویرایش بیمه‌نامه
     public bool $showPolicyFormModal = false;
     public ?int $editingPolicyId = null;
     public array $policyFormData = [
@@ -91,7 +84,6 @@ class ViewUserPortfolio extends Page
         'description'           => '',
     ];
 
-    // مودال ویرایش قسط
     public bool $showInstallmentFormModal = false;
     public ?int $editingInstallmentId = null;
     public array $installmentFormData = [
@@ -165,8 +157,10 @@ class ViewUserPortfolio extends Page
 
     public function toggleEdit(): void
     {
-        $this->isEditing = ! $this->isEditing;
-        if ($this->isEditing) {
+        if ($this->isEditing === true) {
+            $this->isEditing = false;
+        } else {
+            $this->isEditing = true;
             $this->fillEditForm();
         }
     }
@@ -184,12 +178,13 @@ class ViewUserPortfolio extends Page
                 ->title('نام بیمه‌گذار و شماره تلفن همراه الزامی است.')
                 ->danger()
                 ->send();
+
             return;
         }
 
-        $birthDateGregorian = ! empty($this->editData['birth_date'])
-            ? JalaliDateCast::toGregorian((string) $this->editData['birth_date'])
-            : null;
+        $birthDateGregorian = empty($this->editData['birth_date'])
+            ? null
+            : JalaliDateCast::toGregorian((string) $this->editData['birth_date']);
 
         $updatePayload = [
             'name'              => $name,
@@ -204,7 +199,9 @@ class ViewUserPortfolio extends Page
             'address'           => trim((string) ($this->editData['address'] ?? '')) ?: null,
         ];
 
-        if (! empty($this->editData['new_password'])) {
+        if (empty($this->editData['new_password'])) {
+            // رمز عبور تغییر نکرده است
+        } else {
             $updatePayload['password'] = Hash::make((string) $this->editData['new_password']);
         }
 
@@ -217,8 +214,6 @@ class ViewUserPortfolio extends Page
             ->success()
             ->send();
     }
-
-    // ==================== مدیریت مودال جزئیات و ثبت بیمه‌نامه ====================
 
     public function openPolicyDetail(int $policyId): void
     {
@@ -267,7 +262,8 @@ class ViewUserPortfolio extends Page
         $user = $this->getRecord();
         $policy = Policy::where('user_id', $user->id)->findOrFail($policyId);
 
-        $isCash = $policy->payment_type === 'cash' || ($policy->installments()->count() === 0 && $policy->initial_payment >= $policy->total_amount && $policy->total_amount > 0);
+        $isCash = $policy->payment_type === 'cash'
+            || ($policy->installments()->count() === 0 && $policy->initial_payment >= $policy->total_amount && $policy->total_amount > 0);
 
         $this->editingPolicyId = $policy->id;
         $this->policyFormData = [
@@ -281,8 +277,8 @@ class ViewUserPortfolio extends Page
             'no_claim_years'        => (string) ($policy->no_claim_years ?? ''),
             'driver_no_claim_years' => (string) ($policy->driver_no_claim_years ?? ''),
             'profile_title'         => (string) ($policy->profile_title ?? ''),
-            'issued_at_jalali'      => $policy->issued_at_jalali !== '—' ? $policy->issued_at_jalali : '',
-            'expires_at_jalali'     => $policy->expires_at_jalali !== '—' ? $policy->expires_at_jalali : '',
+            'issued_at_jalali'      => $policy->issued_at_jalali === '—' ? '' : $policy->issued_at_jalali,
+            'expires_at_jalali'     => $policy->expires_at_jalali === '—' ? '' : $policy->expires_at_jalali,
             'payment_type'          => $isCash ? 'cash' : 'installment',
             'total_amount'          => (int) $policy->total_amount,
             'initial_payment'       => (int) $policy->initial_payment,
@@ -306,15 +302,17 @@ class ViewUserPortfolio extends Page
         $policyNumber = trim((string) ($this->policyFormData['policy_number'] ?? ''));
         if ($policyNumber === '') {
             Notification::make()->title('شماره بیمه‌نامه الزامی است.')->danger()->send();
+
             return;
         }
 
         $duplicateQuery = Policy::where('policy_number', $policyNumber);
-        if ($this->editingPolicyId) {
-            $duplicateQuery->where('id', '!=', $this->editingPolicyId);
+        if (is_int($this->editingPolicyId)) {
+            $duplicateQuery->whereKeyNot($this->editingPolicyId);
         }
         if ($duplicateQuery->exists()) {
             Notification::make()->title('این شماره بیمه‌نامه قبلاً در سیستم ثبت شده است.')->danger()->send();
+
             return;
         }
 
@@ -360,7 +358,7 @@ class ViewUserPortfolio extends Page
             'description'           => $this->policyFormData['description'] ?? null,
         ];
 
-        if ($this->editingPolicyId) {
+        if (is_int($this->editingPolicyId)) {
             $policy = Policy::where('user_id', $user->id)->findOrFail($this->editingPolicyId);
             $policy->update($payload);
             $msg = 'اطلاعات بیمه‌نامه با موفقیت ویرایش شد.';
@@ -397,8 +395,15 @@ class ViewUserPortfolio extends Page
 
     public function deletePolicy(int $policyId): void
     {
-        if (! (auth()->user()?->isAdmin() || auth()->user()?->hasPermission('delete_users') || auth()->user()?->hasPermission('manage_policies'))) {
+        $canDelete = (bool) (
+            auth()->user()?->isAdmin() ||
+            auth()->user()?->hasPermission('delete_users') ||
+            auth()->user()?->hasPermission('manage_policies')
+        );
+
+        if ($canDelete === false) {
             Notification::make()->title('شما مجوز حذف بیمه‌نامه را ندارید.')->danger()->send();
+
             return;
         }
 
@@ -421,8 +426,6 @@ class ViewUserPortfolio extends Page
             ->success()
             ->send();
     }
-
-    // ==================== مدیریت اقساط در تب ۲ ====================
 
     public function approveInstallment(int $installmentId): void
     {
@@ -460,7 +463,7 @@ class ViewUserPortfolio extends Page
             'installment_number' => (int) $installment->installment_number,
             'amount'             => (int) $installment->amount,
             'documented_amount'  => (int) ($installment->documented_amount ?? 0),
-            'due_date_jalali'    => $installment->due_date_jalali !== '—' ? $installment->due_date_jalali : '',
+            'due_date_jalali'    => $installment->due_date_jalali === '—' ? '' : $installment->due_date_jalali,
             'payment_identifier' => (string) ($installment->payment_identifier ?? ''),
             'status'             => (string) $installment->status,
         ];
@@ -475,7 +478,7 @@ class ViewUserPortfolio extends Page
 
     public function saveInstallment(): void
     {
-        if (! $this->editingInstallmentId) {
+        if ($this->editingInstallmentId === null) {
             return;
         }
 
@@ -518,7 +521,7 @@ class ViewUserPortfolio extends Page
         $user = $this->getRecord();
 
         $log = NotificationLog::where('user_id', $user->id)->find($logId);
-        if ($log) {
+        if ($log instanceof NotificationLog) {
             $log->update(['status' => 'queued', 'error_message' => null]);
             SendBaleMessageJob::dispatch($log->id);
 
@@ -542,7 +545,6 @@ class ViewUserPortfolio extends Page
             });
         });
 
-        // محاسبه دقیق خلاصه مالی (پشتیبانی از پرداخت نقدی کل بیمه‌نامه + پیش‌پرداخت + اقساط)
         $paidFromInstallments = (int) $allInstallments->where('status', 'paid')->sum('amount');
         $paidFromCashAndInitial = (int) $allPolicies->sum(function (Policy $p): int {
             $isCash = $p->payment_type === 'cash'
@@ -561,10 +563,9 @@ class ViewUserPortfolio extends Page
         $overdueAmount = (int) $overdueInstallments->sum('amount');
         $pendingAmount = (int) $allInstallments->whereIn('status', ['pending', 'overdue', 'awaiting_approval'])->sum('amount');
 
-        // ۱. فیلتر و جستجوی بیمه‌نامه‌ها
         $policySearchTerm = PersianNormalizer::normalizeText(trim($this->policySearch));
         $filteredPolicies = $allPolicies->filter(function (Policy $policy) use ($policySearchTerm, $today): bool {
-            if ($policySearchTerm !== '') {
+            if (strlen($policySearchTerm) > 0) {
                 $haystack = PersianNormalizer::normalizeText(implode(' ', [
                     $policy->policy_number,
                     $policy->title,
@@ -573,7 +574,7 @@ class ViewUserPortfolio extends Page
                     $policy->insurer?->name,
                     $policy->profile_title,
                 ]));
-                if (! str_contains(mb_strtolower($haystack), mb_strtolower($policySearchTerm))) {
+                if (str_contains(mb_strtolower($haystack), mb_strtolower($policySearchTerm)) === false) {
                     return false;
                 }
             }
@@ -581,54 +582,55 @@ class ViewUserPortfolio extends Page
             $isCash = $policy->payment_type === 'cash'
                 || ($policy->installments->isEmpty() && $policy->total_amount > 0);
 
-            if ($this->policyPaymentFilter === 'cash' && ! $isCash) {
+            if ($this->policyPaymentFilter === 'cash' && $isCash === false) {
                 return false;
             }
-            if ($this->policyPaymentFilter === 'installment' && $isCash) {
+            if ($this->policyPaymentFilter === 'installment' && $isCash === true) {
                 return false;
             }
 
-            if ($this->policyStatusFilter !== 'all') {
-                if (! $policy->expires_at) {
-                    return $this->policyStatusFilter === 'active';
-                }
-                $daysLeft = (int) $today->diffInDays($policy->expires_at->copy()->startOfDay(), false);
+            if ($this->policyStatusFilter === 'all') {
+                return true;
+            }
 
-                if ($this->policyStatusFilter === 'expired' && $daysLeft >= 0) {
-                    return false;
-                }
-                if ($this->policyStatusFilter === 'expiring_soon' && ($daysLeft < 0 || $daysLeft > 30)) {
-                    return false;
-                }
-                if ($this->policyStatusFilter === 'active' && $daysLeft < 0) {
-                    return false;
-                }
+            if ($policy->expires_at === null) {
+                return $this->policyStatusFilter === 'active';
+            }
+
+            $daysLeft = (int) $today->diffInDays($policy->expires_at->copy()->startOfDay(), false);
+
+            if ($this->policyStatusFilter === 'expired' && $daysLeft >= 0) {
+                return false;
+            }
+            if ($this->policyStatusFilter === 'expiring_soon' && ($daysLeft < 0 || $daysLeft > 30)) {
+                return false;
+            }
+            if ($this->policyStatusFilter === 'active' && $daysLeft < 0) {
+                return false;
             }
 
             return true;
         })->values();
 
-        // ۲. فیلتر، جستجو و مرتب‌سازی اقساط
         $instSearchTerm = PersianNormalizer::normalizeText(trim($this->installmentSearch));
         $filteredInstallments = $allInstallments->filter(function (Installment $inst) use ($instSearchTerm): bool {
-            if ($this->installmentStatusFilter !== 'all' && $inst->status !== $this->installmentStatusFilter) {
-                return false;
-            }
+            if ($this->installmentStatusFilter === 'all' || $inst->status === $this->installmentStatusFilter) {
+                if (strlen($instSearchTerm) > 0) {
+                    $haystack = PersianNormalizer::normalizeText(implode(' ', [
+                        $inst->policy?->policy_number,
+                        $inst->policy?->vehicle_name,
+                        $inst->payment_identifier,
+                        (string) $inst->amount,
+                        $inst->due_date_jalali,
+                    ]));
 
-            if ($instSearchTerm !== '') {
-                $haystack = PersianNormalizer::normalizeText(implode(' ', [
-                    $inst->policy?->policy_number,
-                    $inst->policy?->vehicle_name,
-                    $inst->payment_identifier,
-                    (string) $inst->amount,
-                    $inst->due_date_jalali,
-                ]));
-                if (! str_contains(mb_strtolower($haystack), mb_strtolower($instSearchTerm))) {
-                    return false;
+                    return str_contains(mb_strtolower($haystack), mb_strtolower($instSearchTerm));
                 }
+
+                return true;
             }
 
-            return true;
+            return false;
         });
 
         $filteredInstallments = match ($this->installmentSort) {
@@ -638,20 +640,19 @@ class ViewUserPortfolio extends Page
             default         => $filteredInstallments->sortBy('due_date')->values(),
         };
 
-        // ۳. داده‌های تب تاریخچه و ارتباطات
         $notificationLogs = NotificationLog::where('user_id', $user->id)
             ->latest()
             ->limit(40)
             ->get();
 
         $installmentIds = $allInstallments->pluck('id')->all();
-        $audits = ! empty($installmentIds)
-            ? InstallmentAudit::with(['actor:id,name', 'installment.policy:id,policy_number'])
+        $audits = empty($installmentIds)
+            ? collect()
+            : InstallmentAudit::with(['actor:id,name', 'installment.policy:id,policy_number'])
                 ->whereIn('installment_id', $installmentIds)
                 ->latest()
                 ->limit(40)
-                ->get()
-            : collect();
+                ->get();
 
         $viewingPolicy = $this->viewingPolicyId
             ? $allPolicies->firstWhere('id', $this->viewingPolicyId)
@@ -662,24 +663,24 @@ class ViewUserPortfolio extends Page
         $notificationTargetUrl = NotificationSettingsPage::getUrl(['users' => (string) $user->id]) . '#custom-message-section';
 
         return [
-            'user'                    => $user,
-            'policies'                => $filteredPolicies,
-            'totalPoliciesCount'      => $allPolicies->count(),
-            'allInstallments'         => $filteredInstallments,
-            'totalInstallmentsCount'  => $allInstallments->count(),
-            'paidInstallmentsAmount'  => $paidInstallmentsAmount,
-            'paidFromInstallments'    => $paidFromInstallments,
-            'paidFromCashAndInitial'  => $paidFromCashAndInitial,
-            'overdueCount'            => $overdueCount,
-            'overdueAmount'           => $overdueAmount,
-            'pendingAmount'           => $pendingAmount,
-            'notificationLogs'        => $notificationLogs,
-            'audits'                  => $audits,
-            'historyTotalCount'       => $notificationLogs->count() + $audits->count(),
-            'viewingPolicy'           => $viewingPolicy,
-            'insurers'                => $insurers,
-            'notificationTargetUrl'   => $notificationTargetUrl,
-            'lastUpdatedJalali'       => JalaliDateCast::toJalali($user->updated_at, 'Y/m/d H:i'),
+            'user'                   => $user,
+            'policies'               => $filteredPolicies,
+            'totalPoliciesCount'     => $allPolicies->count(),
+            'allInstallments'        => $filteredInstallments,
+            'totalInstallmentsCount' => $allInstallments->count(),
+            'paidInstallmentsAmount' => $paidInstallmentsAmount,
+            'paidFromInstallments'   => $paidFromInstallments,
+            'paidFromCashAndInitial' => $paidFromCashAndInitial,
+            'overdueCount'           => $overdueCount,
+            'overdueAmount'          => $overdueAmount,
+            'pendingAmount'          => $pendingAmount,
+            'notificationLogs'       => $notificationLogs,
+            'audits'                 => $audits,
+            'historyTotalCount'      => $notificationLogs->count() + $audits->count(),
+            'viewingPolicy'          => $viewingPolicy,
+            'insurers'               => $insurers,
+            'notificationTargetUrl'  => $notificationTargetUrl,
+            'lastUpdatedJalali'      => JalaliDateCast::toJalali($user->updated_at, 'Y/m/d H:i'),
         ];
     }
 }

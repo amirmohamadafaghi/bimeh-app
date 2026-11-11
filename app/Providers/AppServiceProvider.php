@@ -55,7 +55,6 @@ class AppServiceProvider extends ServiceProvider
             });
         });
 
-        // استفاده از آیکون‌های استاندارد Heroicons برای جلوگیری قطعی از خطای SvgNotFound
         FilamentIcon::register([
             'panels::pages.dashboard.navigation-item' => 'heroicon-o-squares-2x2',
             'panels::user-menu.profile-item'          => 'heroicon-o-shield-check',
@@ -65,12 +64,9 @@ class AppServiceProvider extends ServiceProvider
         ]);
     }
 
-    /**
-     * بازنویسی قطعی تمام فایل‌های SVG صفر بایتی در public/images/icons و پاک‌سازی فایل کش خراب
-     */
     private function forceRepairCustomIcons(string $directory): void
     {
-        if (! File::isDirectory($directory)) {
+        if (File::isDirectory($directory) === false) {
             File::makeDirectory($directory, 0755, true);
         }
 
@@ -95,22 +91,20 @@ class AppServiceProvider extends ServiceProvider
             'app_list_close.svg'    => '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg>',
         ];
 
+        $repairedAnyIcon = false;
         foreach ($icons as $filename => $svgContent) {
             $filePath = $directory . '/' . $filename;
-            if (! File::exists($filePath) || File::size($filePath) < 100) {
+            if (File::exists($filePath) === false || File::size($filePath) < 100) {
                 @File::put($filePath, $svgContent);
+                $repairedAnyIcon = true;
             }
         }
 
-        // حذف خودکار فایل کش مانیفست blade-icons و ویوی کامپایل‌شده قدیمی
-        $bladeIconsCache = base_path('bootstrap/cache/blade-icons.php');
-        if (File::exists($bladeIconsCache)) {
-            @File::delete($bladeIconsCache);
-        }
-
-        $staleView = storage_path('framework/views/4943bc92ebba41e8b0e508149542e0ad.blade.php');
-        if (File::exists($staleView)) {
-            @File::delete($staleView);
+        if ($repairedAnyIcon === true) {
+            $bladeIconsCache = base_path('bootstrap/cache/blade-icons.php');
+            if (File::exists($bladeIconsCache)) {
+                @File::delete($bladeIconsCache);
+            }
         }
     }
 }

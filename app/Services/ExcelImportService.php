@@ -12,6 +12,7 @@ use App\Models\SystemActivity;
 use App\Models\User;
 use App\Support\PersianNormalizer;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Morilog\Jalali\Jalalian;
@@ -148,9 +149,6 @@ class ExcelImportService
         }
     }
 
-    /**
-     * استخراج دقیق سلول‌های شیت بدون افت دقت اعداد ۱۷ رقمی (شناسه پرداخت) و بدون تبدیل به نماد علمی (3.145E+16)
-     */
     private function extractWorksheetMatrix(Worksheet $worksheet): array
     {
         $highestRow = $worksheet->getHighestDataRow();
@@ -177,25 +175,28 @@ class ExcelImportService
 
                 if ($cell->getDataType() === DataType::TYPE_NUMERIC || is_int($rawVal) || is_float($rawVal)) {
                     $formatted = trim((string) $cell->getFormattedValue());
-                    // اگر فرمت سلول به صورت علمی (E+) بود یا اعشار کاذب داشت، عدد صحیح دقیق استخراج شود
-                    if (stripos($formatted, 'E') !== false) {
-                        $strVal = number_format((float) $rawVal, 0, '', '');
-                    } elseif (is_float($rawVal) && floor($rawVal) == $rawVal) {
-                        $strVal = number_format($rawVal, 0, '', '');
+                    if (stripos($formatted, 'E') === false) {
+                        if (is_float($rawVal) && floor($rawVal) == $rawVal) {
+                            $strVal = number_format($rawVal, 0, '', '');
+                        } else {
+                            $strVal = (string) $rawVal;
+                        }
                     } else {
-                        $strVal = (string) $rawVal;
+                        $strVal = number_format((float) $rawVal, 0, '', '');
                     }
                 } else {
                     $strVal = trim((string) $rawVal);
                 }
 
-                if ($strVal !== '') {
+                if ($strVal === '') {
+                    // سلول خالی است
+                } else {
                     $hasAnyValue = true;
                 }
                 $rowCells[] = $strVal;
             }
 
-            if ($hasAnyValue) {
+            if ($hasAnyValue === true) {
                 $matrix[] = $rowCells;
             }
         }
@@ -203,9 +204,6 @@ class ExcelImportService
         return $matrix;
     }
 
-    /**
-     * پیدا کردن خودکار سطر هدر در ۲۰ سطر اول شیت (مستقل از ردیف‌های خالی یا عنوان بالای جدول)
-     */
     private function locateHeaderRow(array $matrix): ?array
     {
         $maxScan = min(count($matrix), 20);
@@ -225,7 +223,8 @@ class ExcelImportService
                     continue;
                 }
                 foreach ($knownHeaderKeywords as $kw) {
-                    if ($colName === $this->normalizeHeaderKey($kw) || str_contains($colName, $this->normalizeHeaderKey($kw))) {
+                    $normKw = $this->normalizeHeaderKey($kw);
+                    if ($colName === $normKw || str_contains($colName, $normKw)) {
                         $matches++;
                         break;
                     }
@@ -240,9 +239,6 @@ class ExcelImportService
         return null;
     }
 
-    /**
-     * تشخیص هوشمند نوع ساختار اطلاعات بر اساس ستون‌ها (بدون هیچ وابستگی به نام فایل)
-     */
     private function detectStructureType(array $headers, array $dataRows): string
     {
         $hasColumn = function (array $candidates) use ($headers): bool {
@@ -251,10 +247,10 @@ class ExcelImportService
                     return true;
                 }
             }
+
             return false;
         };
 
-        // ۱. فایل گزارش صدور جامع (مانند «کاربران جدید.xls» که دارای ستون «نوع» نقد/قسط، «مبلغ پرداختی» و «مبلغ» است)
         if (
             ($hasColumn(['مبلغ پرداختی']) && $hasColumn(['نوع']) && $hasColumn(['مبلغ'])) ||
             $hasColumn(['شماره بیمه نامه قبلی', 'بیمه گر قبلی', 'نوع وسیله'])
@@ -262,22 +258,18 @@ class ExcelImportService
             return 'issuance_report';
         }
 
-        // ۲. فایل وضعیت اقساط (مانند «اقساط.xls» که دارای «سررسید» و «مبلغ قسط» یا «مبلغ مستند» است)
         if ($hasColumn(['مبلغ قسط', 'مبلغ مستند', 'تاریخ مستند', 'سررسید'])) {
             return 'installments_flat';
         }
 
-        // ۳. فایل مشخصات بیمه‌نامه‌ها و خودروها (مانند «بیمه.xls» که دارای «شماره انتظامی» یا «نوع و سیستم مورد بیمه» است)
         if ($hasColumn(['شماره انتظامی', 'نوع و سیستم مورد بیمه', 'سال های عدم خسارت', 'مدل خودرو'])) {
             return 'policies_flat';
         }
 
-        // ۴. فرمت انگلیسی یا CSV عمومی
         if ($hasColumn(['policy_number', 'installments_count', 'total_amount'])) {
             return 'generic_csv';
         }
 
-        // ۵. تشخیص پشتیبان در صورتی که حداقل شماره بیمه‌نامه وجود داشته باشد
         if ($hasColumn(['شماره بیمه نامه', 'شماره بیمه‌نامه'])) {
             return 'policies_flat';
         }
@@ -285,16 +277,8 @@ class ExcelImportService
         return 'unknown';
     }
 
-    /**
-     * پردازش هوشمند گزارش صدور (مانند «کاربران جدید.xls»)
-     * پشتیبانی کامل از:
-     * - نقد کامل (حتی اگر عنوان پروفایل اعتباری 50-50 باشد ولی کل مبلغ نقداً پرداخت شده و قسطی زیر آن نباشد؛ مثل کاربر شماره ۶)
-     * - پیش‌پرداخت نقد + اقساط در سطرهای زیرین (مثل کاربر شماره ۲ با ۳ قسط و کاربر شماره ۳ با ۵ قسط)
-     * - عدم دستکاری اقساط تسویه‌شده (paid) و عدم بازنویسی اطلاعات قبلی
-     */
     private function processIssuanceReport(array $rows, array $headers): void
     {
-        // گام ۱: گروه‌بندی ردیف‌ها به بلوک‌های مجزای هر بیمه‌نامه (سطر مادر + سطرهای قسط زیرین)
         $policyBlocks = [];
         $currentBlock = null;
 
@@ -309,29 +293,29 @@ class ExcelImportService
             $paymentRowType = $this->val($rowData, ['نوع', 'نوع پرداخت']);
 
             if ($this->isValidPolicyNumber($policyNumber, $rowIndexVal)) {
-                if ($currentBlock !== null) {
+                if ($currentBlock === null) {
+                    // اولین بلوک بیمه‌نامه
+                } else {
                     $policyBlocks[] = $currentBlock;
                 }
                 $currentBlock = [
                     'main'         => $rowData,
                     'installments' => [],
                 ];
-            } elseif ($currentBlock !== null) {
+            } elseif (is_array($currentBlock)) {
                 $amount = $this->cleanInt($this->val($rowData, ['مبلغ', 'مبلغ قسط', 'amount']));
                 if ($paymentRowType === 'قسط' || ($paymentRowType === '' && $amount > 0 && $policyNumber === '')) {
                     $currentBlock['installments'][] = $rowData;
                 } elseif ($paymentRowType === 'نقد' && $amount > 0) {
-                    // اگر پیش‌پرداخت نقدی دیگری در سطر زیرین ثبت شده بود به پیش‌پرداخت اضافه شود
                     $currentBlock['extra_cash'][] = $amount;
                 }
             }
         }
 
-        if ($currentBlock !== null) {
+        if (is_array($currentBlock)) {
             $policyBlocks[] = $currentBlock;
         }
 
-        // گام ۲: ثبت یا تکمیل هر بلوک بیمه‌نامه و اقساط آن
         foreach ($policyBlocks as $block) {
             $main = $block['main'];
             $instRows = $block['installments'];
@@ -340,10 +324,8 @@ class ExcelImportService
             $user = $this->findOrCreateUserPreservingExisting($main);
             $insurerId = $this->resolveInsurer($this->val($main, ['بیمه گر', 'شرکت بیمه', 'بیمه گر قبلی']) ?: 'بیمه ایران');
 
-            // استخراج نام خودرو و رشته بیمه (پشتیبانی از ۱ خودرو با ۱۰ رشته بیمه مختلف یا ۱۰ خودرو برای ۱ شخص)
             [$category, $vehicle, $title] = $this->extractCategoryAndVehicle($main);
 
-            // محاسبه دقیق مبالغ (مبلغ کل، مبلغ نقد اولیه، و بررسی وجود اقساط)
             $totalAmount = $this->cleanInt($this->val($main, ['مبلغ پرداختی', 'حق بیمه کل', 'مبلغ کل', 'total_amount']));
             $mainRowType = $this->val($main, ['نوع', 'نوع پرداخت']);
             $mainRowAmount = $this->cleanInt($this->val($main, ['مبلغ', 'پیش پرداخت']));
@@ -353,12 +335,10 @@ class ExcelImportService
             if ($mainRowType === 'نقد' && $mainRowAmount > 0) {
                 $initialCashPayment = $mainRowAmount + $extraCash;
             } elseif ($mainRowType === 'قسط' && $mainRowAmount > 0) {
-                // اگر در خود سطر اول مستقیماً قسط اول نوشته شده بود
                 array_unshift($instRows, $main);
                 $initialCashPayment = $extraCash;
             }
 
-            // فیلتر کردن سطرهای قسط معتبر (دارای مبلغ بزرگ‌تر از صفر)
             $validInstRows = array_values(array_filter($instRows, function (array $r): bool {
                 return $this->cleanInt($this->val($r, ['مبلغ', 'مبلغ قسط', 'amount'])) > 0;
             }));
@@ -373,8 +353,6 @@ class ExcelImportService
                 $totalAmount = $initialCashPayment + $sumOfInstallments;
             }
 
-            // تشخیص قطعی نقد یا اقساطی بودن:
-            // اگر هیچ سطر قسطی وجود ندارد (مانند کاربر شماره ۶ که پروفایلش اعتباری 50-50 است اما کل 55,192,900 ریال را نقد داده) -> نقد کامل (cash)
             $isFullCash = ($installmentsCount === 0) || ($initialCashPayment >= $totalAmount && $totalAmount > 0 && $installmentsCount === 0);
             $paymentType = $isFullCash ? 'cash' : 'installment';
 
@@ -382,18 +360,19 @@ class ExcelImportService
                 $initialCashPayment = $totalAmount;
             }
 
-            // بررسی شماره بیمه‌نامه قبلی برای به ارث بردن پلاک و مدل خودرو در صورت وجود در دیتابیس
             $prevPolicyNumber = $this->val($main, ['شماره بیمه نامه قبلی', 'بیمه نامه قبلی']);
             $inheritedPlate = null;
             $inheritedModel = null;
             $inheritedNoClaim = null;
             $inheritedDriverNoClaim = null;
 
-            if ($prevPolicyNumber !== '' && $prevPolicyNumber !== '--') {
+            if ($prevPolicyNumber === '' || $prevPolicyNumber === '--') {
+                // بیمه‌نامه قبلی ثبت نشده است
+            } else {
                 $prevPolicy = Policy::withTrashed()
                     ->where('policy_number', $prevPolicyNumber)
                     ->first();
-                if ($prevPolicy) {
+                if ($prevPolicy instanceof Policy) {
                     $inheritedPlate = $prevPolicy->plate_number;
                     $inheritedModel = $prevPolicy->vehicle_model;
                     $inheritedNoClaim = $prevPolicy->no_claim_years;
@@ -409,9 +388,70 @@ class ExcelImportService
             $expiresJalali = $this->normalizeJalaliDateString($this->val($main, ['تاریخ انقضا', 'expires_at']));
             $issuedJalali  = $this->normalizeJalaliDateString($this->val($main, ['تاریخ صدور', 'issued_at']));
 
+            $hasPrevPolicyDesc = ($prevPolicyNumber === '' || $prevPolicyNumber === '--') ? false : true;
+
             $currentPolicy = Policy::withTrashed()->where('policy_number', $policyNumber)->first();
 
-            if (! $currentPolicy) {
+            if ($currentPolicy instanceof Policy) {
+                if ($currentPolicy->trashed()) {
+                    $currentPolicy->restore();
+                }
+
+                $policyUpdates = [];
+
+                if (empty($currentPolicy->vehicle_name) && strlen($vehicle) > 0) {
+                    $policyUpdates['vehicle_name'] = $vehicle;
+                }
+                if (
+                    (empty($currentPolicy->title) || str_starts_with((string) $currentPolicy->title, 'ثالث - بیمه‌نامه')) &&
+                    strlen($title) > 0
+                ) {
+                    $policyUpdates['title'] = $title;
+                }
+                if (empty($currentPolicy->insurance_category) && strlen($category) > 0) {
+                    $policyUpdates['insurance_category'] = $category;
+                }
+                if (empty($currentPolicy->plate_number) && is_string($plateNumber) && strlen($plateNumber) > 0) {
+                    $policyUpdates['plate_number'] = $plateNumber;
+                }
+                if (empty($currentPolicy->vehicle_model) && is_string($vehicleModel) && strlen($vehicleModel) > 0) {
+                    $policyUpdates['vehicle_model'] = $vehicleModel;
+                }
+                if (empty($currentPolicy->profile_title) && is_string($profileTitle) && strlen($profileTitle) > 0) {
+                    $policyUpdates['profile_title'] = $profileTitle;
+                }
+                if ((int) $currentPolicy->total_amount <= 0 && $totalAmount > 0) {
+                    $policyUpdates['total_amount'] = $totalAmount;
+                }
+                if ((int) $currentPolicy->initial_payment <= 0 && $initialCashPayment > 0) {
+                    $policyUpdates['initial_payment'] = $initialCashPayment;
+                    $policyUpdates['down_payment'] = $initialCashPayment;
+                }
+                if (empty($currentPolicy->started_at_jalali) && is_string($startedJalali)) {
+                    $policyUpdates['started_at_jalali'] = $startedJalali;
+                    $policyUpdates['started_at'] = $this->convertToGregorian($startedJalali);
+                }
+                if (empty($currentPolicy->expires_at_jalali) && is_string($expiresJalali)) {
+                    $policyUpdates['expires_at_jalali'] = $expiresJalali;
+                    $policyUpdates['expires_at'] = $this->convertToGregorian($expiresJalali);
+                }
+                if (empty($currentPolicy->issued_at_jalali) && is_string($issuedJalali)) {
+                    $policyUpdates['issued_at_jalali'] = $issuedJalali;
+                    $policyUpdates['issued_at'] = $this->convertToGregorian($issuedJalali);
+                }
+                if (empty($currentPolicy->description) && $hasPrevPolicyDesc === true) {
+                    $policyUpdates['description'] = "بیمه‌نامه قبلی: {$prevPolicyNumber}";
+                }
+
+                $policyUpdates['payment_type'] = $paymentType;
+                $policyUpdates['installments_count'] = $installmentsCount;
+
+                if ($policyUpdates === []) {
+                    // بدون تغییر
+                } else {
+                    $currentPolicy->update($policyUpdates);
+                }
+            } else {
                 $currentPolicy = Policy::create([
                     'user_id'               => $user->id,
                     'insurer_id'            => $insurerId,
@@ -419,12 +459,12 @@ class ExcelImportService
                     'title'                 => $title,
                     'insurance_category'    => $category,
                     'policyholder_type'     => $this->val($main, ['نوع بیمه گذار', 'نوع بیمه‌گذار']) ?: ($user->policyholder_type ?: 'حقیقی'),
-                    'vehicle_name'          => $vehicle !== '' ? $vehicle : null,
+                    'vehicle_name'          => strlen($vehicle) > 0 ? $vehicle : null,
                     'plate_number'          => $plateNumber,
                     'vehicle_model'         => $vehicleModel,
                     'no_claim_years'        => $inheritedNoClaim,
                     'driver_no_claim_years' => $inheritedDriverNoClaim,
-                    'profile_title'         => $profileTitle !== '' ? $profileTitle : null,
+                    'profile_title'         => (is_string($profileTitle) && strlen($profileTitle) > 0) ? $profileTitle : null,
                     'total_amount'          => $totalAmount,
                     'initial_payment'       => $initialCashPayment,
                     'down_payment'          => $initialCashPayment,
@@ -437,77 +477,16 @@ class ExcelImportService
                     'expires_at'            => $this->convertToGregorian($expiresJalali),
                     'issued_at_jalali'      => $issuedJalali,
                     'issued_at'             => $this->convertToGregorian($issuedJalali),
-                    'description'           => ($prevPolicyNumber !== '' && $prevPolicyNumber !== '--') ? "بیمه‌نامه قبلی: {$prevPolicyNumber}" : null,
+                    'description'           => $hasPrevPolicyDesc === true ? "بیمه‌نامه قبلی: {$prevPolicyNumber}" : null,
                 ]);
-            } else {
-                if ($currentPolicy->trashed()) {
-                    $currentPolicy->restore();
-                }
-
-                // قانون حفظ اطلاعات قبلی: فقط فیلدهایی که در دیتابیس خالی/صفر یا پیش‌فرض هستند تکمیل شوند
-                $policyUpdates = [];
-
-                if (empty($currentPolicy->vehicle_name) && $vehicle !== '') {
-                    $policyUpdates['vehicle_name'] = $vehicle;
-                }
-                if (
-                    (empty($currentPolicy->title) || str_starts_with((string) $currentPolicy->title, 'ثالث - بیمه‌نامه')) &&
-                    $title !== ''
-                ) {
-                    $policyUpdates['title'] = $title;
-                }
-                if (empty($currentPolicy->insurance_category) && $category !== '') {
-                    $policyUpdates['insurance_category'] = $category;
-                }
-                if (empty($currentPolicy->plate_number) && ! empty($plateNumber)) {
-                    $policyUpdates['plate_number'] = $plateNumber;
-                }
-                if (empty($currentPolicy->vehicle_model) && ! empty($vehicleModel)) {
-                    $policyUpdates['vehicle_model'] = $vehicleModel;
-                }
-                if (empty($currentPolicy->profile_title) && $profileTitle !== '') {
-                    $policyUpdates['profile_title'] = $profileTitle;
-                }
-                if ((int) $currentPolicy->total_amount <= 0 && $totalAmount > 0) {
-                    $policyUpdates['total_amount'] = $totalAmount;
-                }
-                if ((int) $currentPolicy->initial_payment <= 0 && $initialCashPayment > 0) {
-                    $policyUpdates['initial_payment'] = $initialCashPayment;
-                    $policyUpdates['down_payment'] = $initialCashPayment;
-                }
-                if (empty($currentPolicy->started_at_jalali) && $startedJalali) {
-                    $policyUpdates['started_at_jalali'] = $startedJalali;
-                    $policyUpdates['started_at'] = $this->convertToGregorian($startedJalali);
-                }
-                if (empty($currentPolicy->expires_at_jalali) && $expiresJalali) {
-                    $policyUpdates['expires_at_jalali'] = $expiresJalali;
-                    $policyUpdates['expires_at'] = $this->convertToGregorian($expiresJalali);
-                }
-                if (empty($currentPolicy->issued_at_jalali) && $issuedJalali) {
-                    $policyUpdates['issued_at_jalali'] = $issuedJalali;
-                    $policyUpdates['issued_at'] = $this->convertToGregorian($issuedJalali);
-                }
-                if (empty($currentPolicy->description) && $prevPolicyNumber !== '' && $prevPolicyNumber !== '--') {
-                    $policyUpdates['description'] = "بیمه‌نامه قبلی: {$prevPolicyNumber}";
-                }
-
-                $policyUpdates['payment_type'] = $paymentType;
-                $policyUpdates['installments_count'] = $installmentsCount;
-
-                if (! empty($policyUpdates)) {
-                    $currentPolicy->update($policyUpdates);
-                }
             }
 
             $this->updatedPolicies++;
 
-            // گام ۳: مدیریت اقساط بیمه‌نامه
             if ($isFullCash) {
-                // برای بیمه‌نامه‌های نقد کامل (مثل کاربر شماره ۶)، هیچ قسطی ساخته نمی‌شود.
-                // اگر از قبل قسط پرداخت‌نشده اشتباهی وجود داشته باشد پاک می‌شود، اما اقساط paid هرگز دستکاری نمی‌شوند.
                 $currentPolicy->installments()
-                    ->where('status', '!=', 'paid')
-                    ->where(function ($q) {
+                    ->whereIn('status', ['pending', 'overdue', 'awaiting_approval'])
+                    ->where(function ($q): void {
                         $q->whereNull('documented_amount')->orWhere('documented_amount', '<=', 0);
                     })
                     ->delete();
@@ -519,23 +498,23 @@ class ExcelImportService
                     $dueDateGregorian = $this->convertToGregorian($dueDateJalali);
                     $paymentIdentifier = $this->cleanDigitsOnly($this->val($instRow, ['شناسه پرداخت', 'payment_identifier']));
 
-                    // جستجوی قسط موجود بر اساس شناسه پرداخت یا شماره قسط
                     $existingInst = null;
-                    if ($paymentIdentifier !== '') {
+                    if (strlen($paymentIdentifier) > 0) {
                         $existingInst = Installment::withTrashed()
                             ->where('policy_id', $currentPolicy->id)
                             ->where('payment_identifier', $paymentIdentifier)
                             ->first();
                     }
-                    if (! $existingInst) {
+                    if ($existingInst instanceof Installment) {
+                        // با شناسه پرداخت پیدا شد
+                    } else {
                         $existingInst = Installment::withTrashed()
                             ->where('policy_id', $currentPolicy->id)
                             ->where('installment_number', $instNumber)
                             ->first();
                     }
 
-                    // قانون طلایی: اگر قسط قبلاً تسویه شده (paid) یا دارای مبلغ مستند است، مطلقاً دستکاری نشود!
-                    if ($existingInst && $this->isInstallmentLockedAsPaid($existingInst)) {
+                    if ($existingInst instanceof Installment && $this->isInstallmentLockedAsPaid($existingInst)) {
                         if ($existingInst->trashed()) {
                             $existingInst->restore();
                         }
@@ -543,21 +522,20 @@ class ExcelImportService
                     }
 
                     $status = 'pending';
-                    if ($dueDateGregorian && $dueDateGregorian < now('Asia/Tehran')->toDateString()) {
+                    if (is_string($dueDateGregorian) && $dueDateGregorian < now('Asia/Tehran')->toDateString()) {
                         $status = 'overdue';
                     }
 
-                    if ($existingInst) {
+                    if ($existingInst instanceof Installment) {
                         if ($existingInst->trashed()) {
                             $existingInst->restore();
                         }
-                        // اگر در وضعیت در انتظار تایید ادمین بود، وضعیت آن حفظ شود
                         $finalStatus = $existingInst->status === 'awaiting_approval' ? 'awaiting_approval' : $status;
 
                         $existingInst->update([
                             'installment_number' => $instNumber,
                             'amount'             => $amount,
-                            'payment_identifier' => $paymentIdentifier !== '' ? $paymentIdentifier : $existingInst->payment_identifier,
+                            'payment_identifier' => strlen($paymentIdentifier) > 0 ? $paymentIdentifier : $existingInst->payment_identifier,
                             'profile_title'      => $profileTitle ?: $existingInst->profile_title,
                             'due_date_jalali'    => $dueDateJalali ?: $existingInst->due_date_jalali,
                             'due_date'           => $dueDateGregorian ?? $existingInst->due_date ?? now('Asia/Tehran')->toDateString(),
@@ -570,7 +548,7 @@ class ExcelImportService
                             'installment_number' => $instNumber,
                             'amount'             => $amount,
                             'paid_amount'        => 0,
-                            'payment_identifier' => $paymentIdentifier !== '' ? $paymentIdentifier : null,
+                            'payment_identifier' => strlen($paymentIdentifier) > 0 ? $paymentIdentifier : null,
                             'profile_title'      => $profileTitle ?: null,
                             'due_date_jalali'    => $dueDateJalali,
                             'due_date'           => $dueDateGregorian ?? now('Asia/Tehran')->toDateString(),
@@ -582,7 +560,6 @@ class ExcelImportService
                     $this->updatedInstallments++;
                 }
 
-                // بروزرسانی مجموع پرداخت‌شده روی بیمه‌نامه
                 $paidInstSum = (int) $currentPolicy->installments()->where('status', 'paid')->sum('amount');
                 $currentPolicy->update([
                     'paid_amount'        => $initialCashPayment + $paidInstSum,
@@ -592,10 +569,6 @@ class ExcelImportService
         }
     }
 
-    /**
-     * پردازش هوشمند فایل مشخصات بیمه‌نامه و خودرو (مانند «بیمه.xls»)
-     * تکمیل اطلاعات خودرو، پلاک، سال ساخت و عدم خسارت بدون تخریب اطلاعات مالی قبلی
-     */
     private function processFlatPolicies(array $rows, array $headers): void
     {
         foreach ($rows as $row) {
@@ -607,7 +580,7 @@ class ExcelImportService
             $policyNumber = $this->val($rowData, ['شماره بیمه نامه', 'شماره بیمه‌نامه', 'policy_number']);
             $rowIndexVal = $this->val($rowData, ['ردیف', 'row']);
 
-            if (! $this->isValidPolicyNumber($policyNumber, $rowIndexVal)) {
+            if ($this->isValidPolicyNumber($policyNumber, $rowIndexVal) === false) {
                 continue;
             }
 
@@ -625,14 +598,54 @@ class ExcelImportService
 
             $policy = Policy::withTrashed()->where('policy_number', $policyNumber)->first();
 
-            if (! $policy) {
+            if ($policy instanceof Policy) {
+                if ($policy->trashed()) {
+                    $policy->restore();
+                }
+
+                $updates = [];
+                if (
+                    (empty($policy->title) || str_starts_with((string) $policy->title, 'ثالث - بیمه‌نامه')) &&
+                    strlen($title) > 0
+                ) {
+                    $updates['title'] = $title;
+                }
+                if (empty($policy->insurance_category) && strlen($category) > 0) {
+                    $updates['insurance_category'] = $category;
+                }
+                if (empty($policy->vehicle_name) && strlen($vehicle) > 0) {
+                    $updates['vehicle_name'] = $vehicle;
+                }
+                if (empty($policy->plate_number) && is_string($plateNumber)) {
+                    $updates['plate_number'] = $plateNumber;
+                }
+                if (empty($policy->vehicle_model) && is_string($vehicleModel)) {
+                    $updates['vehicle_model'] = $vehicleModel;
+                }
+                if (empty($policy->no_claim_years) && is_string($noClaimYears)) {
+                    $updates['no_claim_years'] = $noClaimYears;
+                }
+                if (empty($policy->driver_no_claim_years) && is_string($driverNoClaim)) {
+                    $updates['driver_no_claim_years'] = $driverNoClaim;
+                }
+                if (empty($policy->expires_at_jalali) && is_string($expiresJalali)) {
+                    $updates['expires_at_jalali'] = $expiresJalali;
+                    $updates['expires_at'] = $expiresGregorian;
+                }
+
+                if ($updates === []) {
+                    // بدون تغییر
+                } else {
+                    $policy->update($updates);
+                }
+            } else {
                 $policy = Policy::create([
                     'user_id'               => $user->id,
                     'insurer_id'            => $insurerId,
                     'policy_number'         => $policyNumber,
                     'title'                 => $title,
                     'insurance_category'    => $category,
-                    'vehicle_name'          => $vehicle !== '' ? $vehicle : null,
+                    'vehicle_name'          => strlen($vehicle) > 0 ? $vehicle : null,
                     'plate_number'          => $plateNumber,
                     'vehicle_model'         => $vehicleModel,
                     'no_claim_years'        => $noClaimYears,
@@ -640,54 +653,14 @@ class ExcelImportService
                     'expires_at_jalali'     => $expiresJalali,
                     'expires_at'            => $expiresGregorian,
                 ]);
-            } else {
-                if ($policy->trashed()) {
-                    $policy->restore();
-                }
-
-                // حفظ اطلاعات قبلی و فقط تکمیل فیلدهای خالی یا ناقص
-                $updates = [];
-                if (
-                    (empty($policy->title) || str_starts_with((string) $policy->title, 'ثالث - بیمه‌نامه')) &&
-                    $title !== ''
-                ) {
-                    $updates['title'] = $title;
-                }
-                if (empty($policy->insurance_category) && $category !== '') {
-                    $updates['insurance_category'] = $category;
-                }
-                if (empty($policy->vehicle_name) && $vehicle !== '') {
-                    $updates['vehicle_name'] = $vehicle;
-                }
-                if (empty($policy->plate_number) && $plateNumber !== null) {
-                    $updates['plate_number'] = $plateNumber;
-                }
-                if (empty($policy->vehicle_model) && $vehicleModel !== null) {
-                    $updates['vehicle_model'] = $vehicleModel;
-                }
-                if (empty($policy->no_claim_years) && $noClaimYears !== null) {
-                    $updates['no_claim_years'] = $noClaimYears;
-                }
-                if (empty($policy->driver_no_claim_years) && $driverNoClaim !== null) {
-                    $updates['driver_no_claim_years'] = $driverNoClaim;
-                }
-                if (empty($policy->expires_at_jalali) && $expiresJalali !== null) {
-                    $updates['expires_at_jalali'] = $expiresJalali;
-                    $updates['expires_at'] = $expiresGregorian;
-                }
-
-                if (! empty($updates)) {
-                    $policy->update($updates);
-                }
             }
 
-            // اگر این بیمه‌نامه، «بیمه‌نامه قبلی» یک بیمه‌نامه جدیدتر از همین بیمه‌گذار باشد که هنوز پلاک ندارد، پلاک و مدل خودرو را به بیمه‌نامه جدید هم لینک کن!
-            if ($plateNumber !== null) {
+            if (is_string($plateNumber)) {
                 Policy::where('user_id', $user->id)
                     ->whereNull('plate_number')
-                    ->where(function ($q) use ($policyNumber, $vehicle) {
+                    ->where(function ($q) use ($policyNumber, $vehicle): void {
                         $q->where('description', 'like', "%{$policyNumber}%");
-                        if ($vehicle !== '') {
+                        if (strlen($vehicle) > 0) {
                             $q->orWhere('vehicle_name', $vehicle);
                         }
                     })
@@ -703,11 +676,6 @@ class ExcelImportService
         }
     }
 
-    /**
-     * پردازش هوشمند فایل اقساط (مانند «اقساط.xls»)
-     * - عدم دستکاری رکوردهایی که قبلاً تسویه (paid) شده‌اند
-     * - بروزرسانی اقساط پرداخت‌نشده یا ثبت اقساط جدید
-     */
     private function processFlatInstallments(array $rows, array $headers): void
     {
         $touchedPolicyIds = [];
@@ -721,7 +689,7 @@ class ExcelImportService
             $policyNumber = $this->val($rowData, ['شماره بیمه نامه', 'شماره بیمه‌نامه', 'policy_number']);
             $rowIndexVal = $this->val($rowData, ['ردیف', 'row']);
 
-            if (! $this->isValidPolicyNumber($policyNumber, $rowIndexVal)) {
+            if ($this->isValidPolicyNumber($policyNumber, $rowIndexVal) === false) {
                 continue;
             }
 
@@ -730,7 +698,11 @@ class ExcelImportService
             $profileTitle = $this->val($rowData, ['پروفایل', 'profile_title']) ?: $user->profile_title;
 
             $policy = Policy::withTrashed()->where('policy_number', $policyNumber)->first();
-            if (! $policy) {
+            if ($policy instanceof Policy) {
+                if ($policy->trashed()) {
+                    $policy->restore();
+                }
+            } else {
                 $policy = Policy::create([
                     'user_id'            => $user->id,
                     'insurer_id'         => $insurerId,
@@ -742,8 +714,6 @@ class ExcelImportService
                     'total_amount'       => 0,
                 ]);
                 $this->updatedPolicies++;
-            } elseif ($policy->trashed()) {
-                $policy->restore();
             }
 
             $amount = $this->cleanInt($this->val($rowData, ['مبلغ قسط', 'مبلغ', 'amount']));
@@ -757,62 +727,58 @@ class ExcelImportService
             $dueDateGregorian = $this->convertToGregorian($dueDateJalali);
             $paymentIdentifier = $this->cleanDigitsOnly($this->val($rowData, ['شناسه پرداخت', 'payment_identifier']));
 
-            // تعیین وضعیت جدید بر اساس فایل اکسل
-            if ($documentedAmount > 0 || ! empty($documentedDate)) {
+            if ($documentedAmount > 0 || is_string($documentedDate)) {
                 $newStatus = 'paid';
                 if ($documentedAmount <= 0) {
                     $documentedAmount = $amount;
                 }
-            } elseif ($dueDateGregorian && $dueDateGregorian < now('Asia/Tehran')->toDateString()) {
+            } elseif (is_string($dueDateGregorian) && $dueDateGregorian < now('Asia/Tehran')->toDateString()) {
                 $newStatus = 'overdue';
             } else {
                 $newStatus = 'pending';
             }
 
-            // جستجوی دقیق قسط در دیتابیس:
-            // اولویت ۱: شناسه پرداخت یکتا
-            // اولویت ۲: تاریخ سررسید + مبلغ قسط
-            // اولویت ۳: تاریخ سررسید در همان بیمه‌نامه
             $installment = null;
-            if ($paymentIdentifier !== '') {
+            if (strlen($paymentIdentifier) > 0) {
                 $installment = Installment::withTrashed()
                     ->where('policy_id', $policy->id)
                     ->where('payment_identifier', $paymentIdentifier)
                     ->first();
             }
-            if (! $installment && $dueDateJalali !== null) {
+            if ($installment === null && is_string($dueDateJalali)) {
                 $installment = Installment::withTrashed()
                     ->where('policy_id', $policy->id)
                     ->where('due_date_jalali', $dueDateJalali)
                     ->where('amount', $amount)
                     ->first();
             }
-            if (! $installment && $dueDateJalali !== null) {
+            if ($installment === null && is_string($dueDateJalali)) {
                 $installment = Installment::withTrashed()
                     ->where('policy_id', $policy->id)
                     ->where('due_date_jalali', $dueDateJalali)
                     ->first();
             }
 
-            if ($installment) {
+            if ($installment instanceof Installment) {
                 if ($installment->trashed()) {
                     $installment->restore();
                 }
 
-                // قانون طلایی: اگر این قسط قبلاً در سامانه «تسویه شده (paid)» یا دارای مبلغ مستند بوده است، مطلقاً دستکاری نشود!
                 if ($this->isInstallmentLockedAsPaid($installment)) {
                     continue;
                 }
 
-                $finalStatus = ($installment->status === 'awaiting_approval' && $newStatus !== 'paid')
-                    ? 'awaiting_approval'
-                    : $newStatus;
+                if ($installment->status === 'awaiting_approval' && in_array($newStatus, ['pending', 'overdue'], true)) {
+                    $finalStatus = 'awaiting_approval';
+                } else {
+                    $finalStatus = $newStatus;
+                }
 
                 $installment->update([
                     'amount'             => $amount,
                     'documented_amount'  => $documentedAmount > 0 ? $documentedAmount : $installment->documented_amount,
                     'documented_date'    => $documentedDate ?? $installment->documented_date,
-                    'payment_identifier' => $paymentIdentifier !== '' ? $paymentIdentifier : $installment->payment_identifier,
+                    'payment_identifier' => strlen($paymentIdentifier) > 0 ? $paymentIdentifier : $installment->payment_identifier,
                     'profile_title'      => $profileTitle ?: $installment->profile_title,
                     'due_date_jalali'    => $dueDateJalali ?? $installment->due_date_jalali,
                     'due_date'           => $dueDateGregorian ?? $installment->due_date ?? now('Asia/Tehran')->toDateString(),
@@ -829,7 +795,7 @@ class ExcelImportService
                     'amount'             => $amount,
                     'documented_amount'  => $documentedAmount > 0 ? $documentedAmount : null,
                     'documented_date'    => $documentedDate,
-                    'payment_identifier' => $paymentIdentifier !== '' ? $paymentIdentifier : null,
+                    'payment_identifier' => strlen($paymentIdentifier) > 0 ? $paymentIdentifier : null,
                     'profile_title'      => $profileTitle ?: null,
                     'due_date_jalali'    => $dueDateJalali,
                     'due_date'           => $dueDateGregorian ?? now('Asia/Tehran')->toDateString(),
@@ -844,30 +810,25 @@ class ExcelImportService
             $this->updatedInstallments++;
         }
 
-        // بروزرسانی خلاصه آماری بیمه‌نامه‌هایی که قسط آن‌ها تغییر کرده یا اضافه شده است
         foreach (array_keys($touchedPolicyIds) as $pid) {
             $p = Policy::find($pid);
-            if (! $p) {
-                continue;
-            }
-            $instCount = $p->installments()->count();
-            $paidInstSum = (int) $p->installments()->where('status', 'paid')->sum('amount');
-            $allInstSum = (int) $p->installments()->sum('amount');
+            if ($p instanceof Policy) {
+                $instCount = $p->installments()->count();
+                $paidInstSum = (int) $p->installments()->where('status', 'paid')->sum('amount');
+                $allInstSum = (int) $p->installments()->sum('amount');
 
-            $pUpdates = [
-                'installments_count' => $instCount,
-                'paid_amount'        => (int) $p->initial_payment + $paidInstSum,
-            ];
-            if ((int) $p->total_amount <= 0 && $allInstSum > 0) {
-                $pUpdates['total_amount'] = (int) $p->initial_payment + $allInstSum;
+                $pUpdates = [
+                    'installments_count' => $instCount,
+                    'paid_amount'        => (int) $p->initial_payment + $paidInstSum,
+                ];
+                if ((int) $p->total_amount <= 0 && $allInstSum > 0) {
+                    $pUpdates['total_amount'] = (int) $p->initial_payment + $allInstSum;
+                }
+                $p->update($pUpdates);
             }
-            $p->update($pUpdates);
         }
     }
 
-    /**
-     * پشتیبانی از فایل‌های CSV عمومی
-     */
     private function processGenericCsv(array $rows, array $headers): void
     {
         foreach ($rows as $row) {
@@ -922,10 +883,6 @@ class ExcelImportService
         }
     }
 
-    /**
-     * ایجاد بیمه‌گذار جدید یا تکمیل فیلدهای خالی بیمه‌گذار قبلی (بدون بازنویسی اطلاعات قبلی)
-     * همراه با اصلاح خودکار صفر اول موبایل (915... -> 0915...) و صفر اول کد ملی (859... -> 0859...)
-     */
     private function findOrCreateUserPreservingExisting(array $rowData): User
     {
         $rawNationalCode = $this->val($rowData, ['کد ملی/شناسه ملی/پاسپورت', 'کد ملی', 'کدملی', 'شناسه ملی', 'national_code']);
@@ -943,106 +900,114 @@ class ExcelImportService
 
         $user = null;
 
-        if ($nationalCode !== '') {
+        if (strlen($nationalCode) > 0) {
             $user = User::withTrashed()->where('national_code', $nationalCode)->first();
         }
-        if (! $user && $mobile !== '') {
+        if ($user === null && strlen($mobile) > 0) {
             $user = User::withTrashed()->where('mobile', $mobile)->first();
         }
-        if (! $user && $name !== '') {
+        if ($user === null && strlen($name) > 0) {
             $user = User::withTrashed()->where('name', $name)->first();
         }
 
-        if ($user && $user->trashed()) {
+        if ($user instanceof User && $user->trashed()) {
             $user->restore();
         }
 
-        if (! $user) {
-            $fallbackMobile = $mobile !== ''
+        if ($user instanceof User) {
+            $updates = [];
+
+            if ((empty($user->name) || $user->name === 'بیمه‌گذار') && strlen($name) > 0) {
+                $updates['name'] = $name;
+            }
+            if (empty($user->national_code) && strlen($nationalCode) > 0) {
+                $duplicateNational = User::withTrashed()
+                    ->where('national_code', $nationalCode)
+                    ->whereKeyNot($user->id)
+                    ->exists();
+                if ($duplicateNational === false) {
+                    $updates['national_code'] = $nationalCode;
+                }
+            }
+            if (strlen($mobile) > 0 && (empty($user->mobile) || $user->mobile === $user->national_code || strlen((string) $user->mobile) === 10)) {
+                $duplicateMobile = User::withTrashed()
+                    ->where('mobile', $mobile)
+                    ->whereKeyNot($user->id)
+                    ->exists();
+                if ($duplicateMobile === false) {
+                    $updates['mobile'] = $mobile;
+                }
+            }
+            if (empty($user->phone) && strlen($phone) > 0) {
+                $updates['phone'] = $phone;
+            }
+            if (empty($user->address) && strlen($rawAddress) > 0) {
+                $updates['address'] = $rawAddress;
+            }
+            if (empty($user->policyholder_type) && strlen($rawHolderType) > 0) {
+                $updates['policyholder_type'] = $rawHolderType;
+            }
+            if (empty($user->profile_title) && strlen($rawProfile) > 0) {
+                $updates['profile_title'] = $rawProfile;
+            }
+
+            if ($updates === []) {
+                // بدون تغییر
+            } else {
+                $user->update($updates);
+                $this->updatedUsers++;
+            }
+        } else {
+            $fallbackMobile = strlen($mobile) > 0
                 ? $mobile
-                : ($nationalCode !== '' ? $nationalCode : '09' . random_int(100000000, 999999999));
+                : (strlen($nationalCode) > 0 ? $nationalCode : '09' . random_int(100000000, 999999999));
 
             if (User::withTrashed()->where('mobile', $fallbackMobile)->exists()) {
                 $fallbackMobile = '09' . random_int(100000000, 999999999);
             }
 
             $user = User::create([
-                'name'              => $name !== '' ? $name : 'بیمه‌گذار',
-                'national_code'     => $nationalCode !== '' ? $nationalCode : null,
+                'name'              => strlen($name) > 0 ? $name : 'بیمه‌گذار',
+                'national_code'     => strlen($nationalCode) > 0 ? $nationalCode : null,
                 'mobile'            => $fallbackMobile,
-                'phone'             => $phone !== '' ? $phone : null,
-                'address'           => $rawAddress !== '' ? $rawAddress : null,
-                'policyholder_type' => $rawHolderType !== '' ? $rawHolderType : 'حقیقی',
-                'profile_title'     => $rawProfile !== '' ? $rawProfile : null,
-                'password'          => bcrypt($fallbackMobile),
+                'phone'             => strlen($phone) > 0 ? $phone : null,
+                'address'           => strlen($rawAddress) > 0 ? $rawAddress : null,
+                'policyholder_type' => strlen($rawHolderType) > 0 ? $rawHolderType : 'حقیقی',
+                'profile_title'     => strlen($rawProfile) > 0 ? $rawProfile : null,
+                'password'          => Hash::make($fallbackMobile),
                 'role'              => 'customer',
             ]);
             $this->createdUsers++;
-        } else {
-            // قانون عدم بازنویسی اطلاعات قبلی: فقط فیلدهایی که در دیتابیس خالی هستند تکمیل شوند
-            $updates = [];
-
-            if ((empty($user->name) || $user->name === 'بیمه‌گذار') && $name !== '') {
-                $updates['name'] = $name;
-            }
-            if (empty($user->national_code) && $nationalCode !== '') {
-                if (! User::withTrashed()->where('national_code', $nationalCode)->where('id', '!=', $user->id)->exists()) {
-                    $updates['national_code'] = $nationalCode;
-                }
-            }
-            // اگر موبایل قبلی کد ملی یا شماره موقت بوده یا بدون صفر اول ثبت شده بود، به موبایل استاندارد اصلاح شود
-            if ($mobile !== '' && (empty($user->mobile) || $user->mobile === $user->national_code || strlen((string) $user->mobile) === 10)) {
-                if (! User::withTrashed()->where('mobile', $mobile)->where('id', '!=', $user->id)->exists()) {
-                    $updates['mobile'] = $mobile;
-                }
-            }
-            if (empty($user->phone) && $phone !== '') {
-                $updates['phone'] = $phone;
-            }
-            if (empty($user->address) && $rawAddress !== '') {
-                $updates['address'] = $rawAddress;
-            }
-            if (empty($user->policyholder_type) && $rawHolderType !== '') {
-                $updates['policyholder_type'] = $rawHolderType;
-            }
-            if (empty($user->profile_title) && $rawProfile !== '') {
-                $updates['profile_title'] = $rawProfile;
-            }
-
-            if (! empty($updates)) {
-                $user->update($updates);
-                $this->updatedUsers++;
-            }
         }
 
         return $user;
     }
 
-    /**
-     * استخراج هوشمند رشته بیمه (ثالث، بدنه، آتش‌سوزی، عمر، مسئولیت، حوادث و...) و نام خودرو
-     */
     private function extractCategoryAndVehicle(array $rowData): array
     {
         $explicitCategory = $this->val($rowData, ['رشته', 'رشته بیمه', 'نوع بیمه', 'موضوع بیمه', 'insurance_category']);
 
         $combinedVehicle = $this->val($rowData, ['نوع و سیستم مورد بیمه', 'مورد بیمه', 'vehicle_name']);
-        if ($combinedVehicle !== '') {
+        if (strlen($combinedVehicle) > 0) {
             $combinedVehicle = trim(str_replace('--', '', $combinedVehicle));
-            $combinedVehicle = preg_replace('/\s+/u', ' ', $combinedVehicle);
+            $combinedVehicle = (string) preg_replace('/\s+/u', ' ', $combinedVehicle);
         } else {
             $parts = array_filter([
                 $this->val($rowData, ['نوع وسیله']),
                 $this->val($rowData, ['نوع سیستم', 'سیستم']),
                 $this->val($rowData, ['تیپ']),
-            ], fn (string $v): bool => $v !== '' && $v !== '--');
+            ], function (string $v): bool {
+                if ($v === '' || $v === '--') {
+                    return false;
+                }
 
-            $combinedVehicle = trim(preg_replace('/\s+/u', ' ', implode(' ', $parts)));
+                return true;
+            });
+
+            $combinedVehicle = trim((string) preg_replace('/\s+/u', ' ', implode(' ', $parts)));
         }
 
-        if ($explicitCategory !== '' && $explicitCategory !== '--') {
-            $category = $explicitCategory;
-        } else {
-            // تشخیص رشته بیمه از روی متن یا شماره بیمه‌نامه
+        if ($explicitCategory === '' || $explicitCategory === '--') {
             $checkText = $combinedVehicle . ' ' . $this->val($rowData, ['عنوان', 'title']);
             if (str_contains($checkText, 'بدنه')) {
                 $category = 'بدنه';
@@ -1057,18 +1022,17 @@ class ExcelImportService
             } else {
                 $category = 'ثالث';
             }
+        } else {
+            $category = $explicitCategory;
         }
 
-        $title = $combinedVehicle !== ''
+        $title = strlen($combinedVehicle) > 0
             ? "{$category} - {$combinedVehicle}"
             : $category;
 
         return [$category, $combinedVehicle, $title];
     }
 
-    /**
-     * بررسی اینکه آیا قسط در سامانه تسویه شده است و نباید دستکاری شود
-     */
     private function isInstallmentLockedAsPaid(Installment $installment): bool
     {
         return $installment->status === 'paid'
@@ -1076,9 +1040,6 @@ class ExcelImportService
             || ((int) $installment->paid_amount > 0 && $installment->status === 'paid');
     }
 
-    /**
-     * اصلاح خودکار شماره موبایل (تبدیل 9151371442 به 09151371442 و +98915... به 0915...)
-     */
     private function normalizeIranianMobile(?string $raw): string
     {
         $digits = $this->cleanDigitsOnly($raw);
@@ -1097,9 +1058,6 @@ class ExcelImportService
         return $digits;
     }
 
-    /**
-     * اصلاح خودکار کد ملی که صفر اول آن در اکسل افتاده است (مثلاً 859840417 -> 0859840417)
-     */
     private function normalizeIranianNationalCode(?string $raw): string
     {
         $digits = $this->cleanDigitsOnly($raw);
@@ -1116,7 +1074,7 @@ class ExcelImportService
 
     private function resolveInsurer(?string $insurerName): ?int
     {
-        if (! Schema::hasTable('insurers')) {
+        if (Schema::hasTable('insurers') === false) {
             return null;
         }
 
@@ -1160,7 +1118,9 @@ class ExcelImportService
         $hasData = false;
         foreach ($rowData as $key => $val) {
             $str = trim((string) $val);
-            if ($str !== '' && $str !== '--') {
+            if ($str === '' || $str === '--') {
+                // بدون مقدار معتبر
+            } else {
                 $hasData = true;
             }
             if (in_array($key, ['ردیف', 'تاریخ صدور', 'شماره بیمه نامه'], true)) {
@@ -1170,7 +1130,11 @@ class ExcelImportService
             }
         }
 
-        return ! $hasData;
+        if ($hasData === true) {
+            return false;
+        }
+
+        return true;
     }
 
     private function normalizeJalaliDateString(?string $jalaliDate): ?string
@@ -1179,16 +1143,18 @@ class ExcelImportService
             return null;
         }
         $clean = trim(str_replace('-', '/', PersianNormalizer::normalizeText($jalaliDate)));
-        if ($clean === '' || $clean === '--' || ! str_contains($clean, '/')) {
+        if ($clean === '' || $clean === '--') {
             return null;
         }
 
-        $parts = explode('/', $clean);
-        if (count($parts) !== 3 || ! is_numeric($parts[0])) {
-            return null;
+        if (str_contains($clean, '/')) {
+            $parts = explode('/', $clean);
+            if (count($parts) === 3 && is_numeric($parts[0])) {
+                return sprintf('%04d/%02d/%02d', (int) $parts[0], (int) $parts[1], (int) $parts[2]);
+            }
         }
 
-        return sprintf('%04d/%02d/%02d', (int) $parts[0], (int) $parts[1], (int) $parts[2]);
+        return null;
     }
 
     private function convertToGregorian(?string $jalaliDate): ?string
@@ -1200,6 +1166,7 @@ class ExcelImportService
 
         try {
             $parts = explode('/', $normalized);
+
             return (new Jalalian((int) $parts[0], (int) $parts[1], (int) $parts[2]))
                 ->toCarbon()
                 ->toDateString();
@@ -1221,7 +1188,7 @@ class ExcelImportService
     {
         $combined = [];
         foreach ($headers as $index => $header) {
-            if ($header !== '') {
+            if (strlen($header) > 0) {
                 $combined[$header] = $row[$index] ?? null;
             }
         }
@@ -1233,11 +1200,11 @@ class ExcelImportService
     {
         foreach ($candidateKeys as $key) {
             $normKey = $this->normalizeHeaderKey($key);
-            if (array_key_exists($normKey, $rowData) && $rowData[$normKey] !== null) {
+            if (array_key_exists($normKey, $rowData) && isset($rowData[$normKey])) {
                 $v = trim(PersianNormalizer::normalizeText((string) $rowData[$normKey]));
-                $v = preg_replace('/\s+/u', ' ', $v);
-                if ($v !== '') {
-                    return (string) $v;
+                $v = (string) preg_replace('/\s+/u', ' ', $v);
+                if (strlen($v) > 0) {
+                    return $v;
                 }
             }
         }
@@ -1251,7 +1218,6 @@ class ExcelImportService
             return '';
         }
         $norm = PersianNormalizer::normalizeText($value);
-        // اگر رشته به صورت 859840417.0 بود بخش اعشاری صفر آن حذف شود
         if (preg_match('/^(\d+)\.0+$/', trim($norm), $m)) {
             return $m[1];
         }
@@ -1266,6 +1232,6 @@ class ExcelImportService
         }
         $digits = $this->cleanDigitsOnly((string) $value);
 
-        return $digits !== '' ? (int) $digits : 0;
+        return strlen($digits) > 0 ? (int) $digits : 0;
     }
 }

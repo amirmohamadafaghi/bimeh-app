@@ -19,7 +19,7 @@ class BackupDatabaseCommand extends Command
     public function handle(): int
     {
         $backupDir = storage_path('app/private/backups');
-        if (! File::isDirectory($backupDir)) {
+        if (File::isDirectory($backupDir) === false) {
             File::makeDirectory($backupDir, 0755, true);
         }
 
@@ -39,19 +39,20 @@ class BackupDatabaseCommand extends Command
 
                 $createTableResult = DB::select("SHOW CREATE TABLE `{$table}`");
                 $createSyntax = (array) ($createTableResult[0] ?? []);
-                $createSql = $createSyntax['Create Table'] ?? array_values($createSyntax)[1] ?? '';
+                $createSql = (string) ($createSyntax['Create Table'] ?? array_values($createSyntax)[1] ?? '');
 
-                if ($createSql !== '') {
+                if (strlen($createSql) > 0) {
                     $sql .= "DROP TABLE IF EXISTS `{$table}`;\n{$createSql};\n\n";
                 }
 
                 foreach (DB::table($table)->cursor() as $row) {
                     $rowArray = (array) $row;
-                    $columns = array_map(fn ($col) => "`{$col}`", array_keys($rowArray));
-                    $values = array_map(function ($val) use ($pdo) {
+                    $columns = array_map(fn ($col): string => "`{$col}`", array_keys($rowArray));
+                    $values = array_map(function ($val) use ($pdo): string {
                         if ($val === null) {
                             return 'NULL';
                         }
+
                         return $pdo->quote((string) $val);
                     }, array_values($rowArray));
 
@@ -68,11 +69,10 @@ class BackupDatabaseCommand extends Command
             $sql .= "SET FOREIGN_KEY_CHECKS=1;\n";
 
             $compressed = gzencode($sql, 9);
-            File::put($filePath, $compressed !== false ? $compressed : $sql);
+            File::put($filePath, is_string($compressed) ? $compressed : $sql);
 
-            // نگهداری حداکثر ۱۴ فایل بکاپ آخر و حذف قدیمی‌ترها
             $files = collect(File::files($backupDir))
-                ->sortByDesc(fn (\SplFileInfo $file) => $file->getMTime())
+                ->sortByDesc(fn (\SplFileInfo $file): int => $file->getMTime())
                 ->values();
 
             if ($files->count() > 14) {

@@ -18,7 +18,6 @@ class ManageAdminPermissions extends Page implements HasForms
 
     protected static ?string $navigationIcon = 'app_admin';
 
-    // عدم نمایش در سایدبار / منوی اصلی؛ دسترسی فقط از طریق دکمه هدر پروفایل
     protected static bool $shouldRegisterNavigation = false;
 
     protected static ?string $title = 'مدیریت اختیارات و دسترسی مدیران';
@@ -36,9 +35,8 @@ class ManageAdminPermissions extends Page implements HasForms
 
     public function mount(): void
     {
-        // انتخاب اولین منجر به صورت پیش‌فرض در صورت وجود
         $firstManager = User::where('role', 'manager')->first();
-        if ($firstManager) {
+        if ($firstManager instanceof User) {
             $this->selected_manager_id = $firstManager->id;
             $this->permissions = is_array($firstManager->permissions) ? $firstManager->permissions : [];
         }
@@ -46,13 +44,14 @@ class ManageAdminPermissions extends Page implements HasForms
 
     public function updatedSelectedManagerId($value): void
     {
-        if (! $value) {
+        if (empty($value)) {
             $this->permissions = [];
+
             return;
         }
 
         $manager = User::find($value);
-        if ($manager && $manager->role === 'manager') {
+        if ($manager instanceof User && $manager->role === 'manager') {
             $this->permissions = is_array($manager->permissions) ? $manager->permissions : [];
         } else {
             $this->permissions = [];
@@ -89,13 +88,14 @@ class ManageAdminPermissions extends Page implements HasForms
 
     public function save(): void
     {
-        if (! $this->selected_manager_id) {
+        if ($this->selected_manager_id === null) {
             Notification::make()->title('لطفاً ابتدا یک منجر را انتخاب کنید.')->warning()->send();
+
             return;
         }
 
         $manager = User::where('role', 'manager')->find($this->selected_manager_id);
-        if ($manager) {
+        if ($manager instanceof User) {
             $manager->update([
                 'permissions' => array_values($this->permissions),
             ]);

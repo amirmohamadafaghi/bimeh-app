@@ -22,23 +22,18 @@ use Illuminate\View\View;
 
 class CustomerPortalController extends Controller
 {
-    /**
-     * ۱. صفحه اصلی داشبورد: خوش‌آمدگویی تصادفی + تقویم ماهانه شمسی + آموزش استفاده از وب‌اپلیکیشن
-     */
     public function dashboard(Request $request): View
     {
         /** @var User $user */
         $user = $request->user();
         $common = $this->getCommonPortalData($user);
 
-        // انتخاب یک پیام خوش‌آمدگویی تصادفی از فایل config/customer_welcome.php
         $messages = config('customer_welcome.messages', [
             'همراه گرامی :name، به پرتال هوشمند آفاق بیمه خوش آمدید.',
         ]);
         $rawWelcome = $messages[array_rand($messages)] ?? 'به پرتال آفاق بیمه خوش آمدید.';
         $welcomeMessage = str_replace(':name', $user->name ?: 'بیمه‌گذار گرامی', $rawWelcome);
 
-        // ساخت داده‌های تقویم ماهانه شمسی
         $calendar = $this->buildCurrentJalaliMonthCalendar($common['policies']);
 
         return view('customer.dashboard', array_merge($common, [
@@ -47,9 +42,6 @@ class CustomerPortalController extends Controller
         ]));
     }
 
-    /**
-     * ۲. صفحه مستقل بیمه و اقساط + پرداخت‌های پیش‌رو و تاریخچه پرداخت‌ها در پایین صفحه
-     */
     public function policies(Request $request): View
     {
         /** @var User $user */
@@ -59,9 +51,6 @@ class CustomerPortalController extends Controller
         return view('customer.policies', $common);
     }
 
-    /**
-     * ۳. صفحه مستقل اعلان‌ها (پیام‌های ادمین + فیلتر همه/خوانده‌نشده + صفحه‌بندی + خواندن همه)
-     */
     public function notifications(Request $request): View
     {
         /** @var User $user */
@@ -69,35 +58,33 @@ class CustomerPortalController extends Controller
         $common = $this->getCommonPortalData($user);
         $filter = $request->query('filter', 'all') === 'unread' ? 'unread' : 'all';
 
-        // دریافت اعلان‌های دیتابیس کاربر
         $dbNotifsQuery = $filter === 'unread'
             ? $user->unreadNotifications()
             : $user->notifications();
 
-        $dbNotifs = $dbNotifsQuery->latest()->get()->map(function ($n) {
+        $dbNotifs = $dbNotifsQuery->latest()->get()->map(function ($n): array {
             return [
                 'id'             => (string) $n->id,
                 'title'          => $n->data['title'] ?? 'اعلان سیستم آفاق بیمه',
                 'message'        => $n->data['message'] ?? '',
                 'created_jalali' => $n->data['created_jalali'] ?? JalaliDateCast::toJalali($n->created_at, 'Y/m/d H:i'),
                 'created_at'     => $n->created_at,
-                'is_unread'      => is_null($n->read_at),
+                'is_unread'      => $n->read_at === null,
                 'type_label'     => 'پیام سامانه',
             ];
         });
 
-        // در صورتی که پیامی در NotificationLog توسط ادمین ثبت شده باشد و در جدول notifications نباشد
         $logs = NotificationLog::where('user_id', $user->id)
             ->latest()
             ->limit(100)
             ->get()
-            ->map(function (NotificationLog $log) {
+            ->map(function (NotificationLog $log): array {
                 $typeLabel = match ($log->type) {
-                    'installment_reminder' => 'یادآور قسط',
-                    'policy_renewal'       => 'تمدید بیمه‌نامه',
-                    'birthday_greeting'    => 'تبریک تولد',
-                    'custom_message', 'custom' => 'پیام مدیریت',
-                    default                => 'اعلان سیستم',
+                    'installment_reminder'      => 'یادآور قسط',
+                    'policy_renewal'            => 'تمدید بیمه‌نامه',
+                    'birthday_greeting'         => 'تبریک تولد',
+                    'custom_message', 'custom'  => 'پیام مدیریت',
+                    default                     => 'اعلان سیستم',
                 };
 
                 return [
@@ -112,7 +99,7 @@ class CustomerPortalController extends Controller
             });
 
         $merged = $dbNotifs->concat($logs)
-            ->unique(fn ($item) => trim($item['message']) . '|' . substr((string) $item['created_jalali'], 0, 10))
+            ->unique(fn ($item): string => trim((string) $item['message']) . '|' . substr((string) $item['created_jalali'], 0, 10))
             ->sortByDesc('created_at')
             ->values();
 
@@ -120,7 +107,6 @@ class CustomerPortalController extends Controller
             $merged = $merged->where('is_unread', true)->values();
         }
 
-        // صفحه‌بندی استاندارد (۱۰ پیام در هر صفحه)
         $perPage = 10;
         $currentPage = LengthAwarePaginator::resolveCurrentPage();
         $currentItems = $merged->slice(($currentPage - 1) * $perPage, $perPage)->values();
@@ -142,9 +128,6 @@ class CustomerPortalController extends Controller
         ]));
     }
 
-    /**
-     * ۴. صفحه مستقل پروفایل
-     */
     public function profile(Request $request): View
     {
         /** @var User $user */
@@ -154,9 +137,6 @@ class CustomerPortalController extends Controller
         return view('customer.profile', $common);
     }
 
-    /**
-     * ذخیره تغییرات مجاز پروفایل توسط بیمه‌گذار (تاریخ تولد، جنسیت، آدرس)
-     */
     public function updateProfile(Request $request): RedirectResponse
     {
         /** @var User $user */
@@ -192,9 +172,6 @@ class CustomerPortalController extends Controller
             ->with('status', 'اطلاعات پروفایل شما با موفقیت بروزرسانی شد.');
     }
 
-    /**
-     * ۵. صفحه مستقل تماس با ما
-     */
     public function contact(Request $request): View
     {
         /** @var User $user */
@@ -204,9 +181,6 @@ class CustomerPortalController extends Controller
         return view('customer.contact', $common);
     }
 
-    /**
-     * خواندن همه اعلان‌های کاربر
-     */
     public function markAllNotificationsRead(Request $request): RedirectResponse
     {
         /** @var User $user */
@@ -216,9 +190,6 @@ class CustomerPortalController extends Controller
         return back()->with('status', 'تمامی اعلان‌ها به عنوان خوانده‌شده علامت‌گذاری شدند.');
     }
 
-    /**
-     * ذخیره اشتراک Web Push مرورگر
-     */
     public function savePushSubscription(Request $request): JsonResponse
     {
         /** @var User $user */
@@ -236,60 +207,53 @@ class CustomerPortalController extends Controller
         ]);
     }
 
-    /**
-     * ثبت درخواست تمدید آنلاین بیمه‌نامه
-     */
     public function requestPolicyRenewal(Request $request, Policy $policy): RedirectResponse
     {
         /** @var User $user */
         $user = $request->user();
 
-        if ((int) $policy->user_id !== (int) $user->id) {
-            abort(403);
+        if ((int) $policy->user_id === (int) $user->id) {
+            SystemActivity::create([
+                'actor_id'   => $user->id,
+                'event_type' => 'renewal_requested',
+                'title'      => "درخواست تمدید آنلاین بیمه‌نامه ({$policy->policy_number}) توسط {$user->name}",
+                'icon'       => 'app_policies',
+                'color'      => 'amber',
+                'details'    => [
+                    'policy_id'     => $policy->id,
+                    'policy_number' => $policy->policy_number,
+                    'customer_name' => $user->name,
+                    'mobile'        => $user->mobile,
+                ],
+            ]);
+
+            return back()->with('status', 'درخواست تمدید بیمه‌نامه شما ثبت شد. کارشناسان نمایندگی آفاقی به زودی با شما تماس خواهند گرفت.');
         }
 
-        SystemActivity::create([
-            'actor_id'   => $user->id,
-            'event_type' => 'renewal_requested',
-            'title'      => "درخواست تمدید آنلاین بیمه‌نامه ({$policy->policy_number}) توسط {$user->name}",
-            'icon'       => 'app_policies',
-            'color'      => 'amber',
-            'details'    => [
-                'policy_id'     => $policy->id,
-                'policy_number' => $policy->policy_number,
-                'customer_name' => $user->name,
-                'mobile'        => $user->mobile,
-            ],
-        ]);
-
-        return back()->with('status', 'درخواست تمدید بیمه‌نامه شما ثبت شد. کارشناسان نمایندگی آفاقی به زودی با شما تماس خواهند گرفت.');
+        abort(403);
     }
 
-    /**
-     * صفحه پرداخت تک‌قسطی با لینک امضاشده
-     */
     public function signedSingleInstallmentPay(Request $request, Installment $installment, User $user): View
     {
         $installment->loadMissing('policy.user');
 
-        if ((int) $installment->policy?->user_id !== (int) $user->id) {
-            abort(403, 'این لینک پرداخت متعلق به حساب کاربری مشخص‌شده نیست.');
+        if ((int) $installment->policy?->user_id === (int) $user->id) {
+            return view('customer.single-pay', [
+                'installment' => $installment,
+                'user'        => $user,
+            ]);
         }
 
-        return view('customer.single-pay', [
-            'installment' => $installment,
-            'user'        => $user,
-        ]);
+        abort(403, 'این لینک پرداخت متعلق به حساب کاربری مشخص‌شده نیست.');
     }
 
-    /**
-     * تایید پرداخت قسط توسط مشتری و تغییر وضعیت به در انتظار تایید ادمین
-     */
     public function confirmSingleInstallmentPay(Request $request, Installment $installment): RedirectResponse
     {
         $installment->loadMissing('policy.user');
 
-        if ($installment->status !== 'paid') {
+        if ($installment->status === 'paid') {
+            // قسط از قبل تسویه شده است
+        } else {
             $installment->update([
                 'status' => 'awaiting_approval',
             ]);
@@ -310,9 +274,6 @@ class CustomerPortalController extends Controller
         return back()->with('status', 'پرداخت شما ثبت شد و در وضعیت «در انتظار تایید ادمین» قرار گرفت.');
     }
 
-    /**
-     * داده‌های مشترک موردنیاز در هدر و صفحات پرتال
-     */
     protected function getCommonPortalData(User $user): array
     {
         $policies = Policy::with(['installments' => fn ($q) => $q->orderBy('installment_number')])
@@ -324,14 +285,12 @@ class CustomerPortalController extends Controller
         $today = now('Asia/Tehran')->startOfDay();
         $threeMonthsLater = $today->copy()->addDays(90)->endOfDay();
 
-        $upcomingThreeMonths = $allInstallments->filter(function (Installment $inst) use ($today, $threeMonthsLater) {
-            if (! in_array($inst->status, ['pending', 'overdue'], true)) {
-                return false;
+        $upcomingThreeMonths = $allInstallments->filter(function (Installment $inst) use ($threeMonthsLater): bool {
+            if (in_array($inst->status, ['pending', 'overdue'], true) && $inst->due_date instanceof Carbon) {
+                return $inst->due_date->lte($threeMonthsLater);
             }
-            if (! $inst->due_date) {
-                return false;
-            }
-            return $inst->due_date->lte($threeMonthsLater);
+
+            return false;
         });
 
         $upcomingInstallments = $allInstallments
@@ -344,7 +303,7 @@ class CustomerPortalController extends Controller
             ->sortByDesc('updated_at')
             ->values();
 
-        $botUsername = trim((string) config('services.bale.bot_username', env('BALE_BOT_USERNAME', 'afagh_bimeh_bot')), '@');
+        $botUsername = trim((string) config('services.bale.bot_username', 'afagh_bimeh_bot'), '@');
         $baleBotUrl = "https://ble.ir/{$botUsername}?start=u_{$user->id}";
 
         return [
@@ -360,12 +319,6 @@ class CustomerPortalController extends Controller
         ];
     }
 
-    /**
-     * ساخت تقویم ماهانه شمسی برای ماه جاری به همراه رنگ‌بندی روزها:
-     * - امروز بدون قسط: آبی (blue)
-     * - روزهایی که قسط دارند: زرد (yellow)
-     * - اگر امروز قسط دارد (یا قسط معوق در امروز): قرمز (red)
-     */
     protected function buildCurrentJalaliMonthCalendar($policies): array
     {
         $todayCarbon = now('Asia/Tehran')->startOfDay();
@@ -392,38 +345,35 @@ class CustomerPortalController extends Controller
         ];
 
         $daysInMonth = match (true) {
-            $jMonth <= 6 => 31,
+            $jMonth <= 6  => 31,
             $jMonth <= 11 => 30,
-            default => $this->isJalaliLeapYear($jYear) ? 30 : 29,
+            default       => $this->isJalaliLeapYear($jYear) ? 30 : 29,
         };
 
-        // محاسبه روز اول ماه جاری شمسی در تقویم میلادی و اندیس روز هفته (شنبه = 0 تا جمعه = 6)
         $firstDayCarbon = $todayCarbon->copy()->subDays($jDay - 1);
         $startDayOfWeek = ($firstDayCarbon->dayOfWeek + 1) % 7;
 
-        // استخراج اقساط ماه جاری بر اساس شماره روز
         $installmentsByDay = [];
         foreach ($policies as $policy) {
             foreach ($policy->installments as $inst) {
-                if (! in_array($inst->status, ['pending', 'overdue'], true)) {
-                    continue;
-                }
-                $instJalali = PersianNormalizer::normalizeText((string) $inst->due_date_jalali);
-                $instParts = explode('/', $instJalali);
-                if (count($instParts) === 3) {
-                    $iy = (int) $instParts[0];
-                    $im = (int) $instParts[1];
-                    $id = (int) $instParts[2];
-                    if ($iy === $jYear && $im === $jMonth) {
-                        $installmentsByDay[$id][] = [
-                            'id'                 => $inst->id,
-                            'installment_number' => $inst->installment_number,
-                            'policy_title'       => $policy->title,
-                            'policy_number'      => $policy->policy_number,
-                            'amount'             => (int) $inst->amount,
-                            'status'             => $inst->status,
-                            'pay_url'            => $inst->generateSignedPaymentUrl(),
-                        ];
+                if (in_array($inst->status, ['pending', 'overdue'], true)) {
+                    $instJalali = PersianNormalizer::normalizeText((string) $inst->due_date_jalali);
+                    $instParts = explode('/', $instJalali);
+                    if (count($instParts) === 3) {
+                        $iy = (int) $instParts[0];
+                        $im = (int) $instParts[1];
+                        $id = (int) $instParts[2];
+                        if ($iy === $jYear && $im === $jMonth) {
+                            $installmentsByDay[$id][] = [
+                                'id'                 => $inst->id,
+                                'installment_number' => $inst->installment_number,
+                                'policy_title'       => $policy->title,
+                                'policy_number'      => $policy->policy_number,
+                                'amount'             => (int) $inst->amount,
+                                'status'             => $inst->status,
+                                'pay_url'            => $inst->generateSignedPaymentUrl(),
+                            ];
+                        }
                     }
                 }
             }
@@ -432,13 +382,9 @@ class CustomerPortalController extends Controller
         $days = [];
         for ($d = 1; $d <= $daysInMonth; $d++) {
             $dayInsts = $installmentsByDay[$d] ?? [];
-            $hasInstallment = ! empty($dayInsts);
+            $hasInstallment = count($dayInsts) > 0;
             $isToday = ($d === $jDay);
 
-            // تعیین وضعیت رنگ دقیق طبق دستور شما:
-            // ۱. اگر امروز است و قسط دارد -> قرمز (red)
-            // ۲. اگر امروز است و قسط ندارد -> آبی (blue)
-            // ۳. اگر روز دیگری از ماه است و قسط دارد -> زرد (yellow)
             $state = 'normal';
             if ($isToday && $hasInstallment) {
                 $state = 'red';
@@ -472,6 +418,7 @@ class CustomerPortalController extends Controller
     protected function isJalaliLeapYear(int $jy): bool
     {
         $rem = ($jy + 2346) % 2820;
-        return (((($rem + 38) * 31) % 128) < 31);
+
+        return ((($rem + 38) * 31) % 128) < 31;
     }
 }

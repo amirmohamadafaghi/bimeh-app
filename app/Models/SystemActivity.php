@@ -1,9 +1,12 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 use App\Casts\JalaliDateCast;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class SystemActivity extends Model
 {
@@ -23,7 +26,7 @@ class SystemActivity extends Model
         ];
     }
 
-    public function actor()
+    public function actor(): BelongsTo
     {
         return $this->belongsTo(User::class, 'actor_id');
     }
@@ -35,7 +38,7 @@ class SystemActivity extends Model
 
     public function getRelativeTimeAttribute(): string
     {
-        if (! $this->created_at) {
+        if ($this->created_at === null) {
             return 'لحظاتی پیش';
         }
 

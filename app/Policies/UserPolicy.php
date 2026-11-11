@@ -25,9 +25,8 @@ class UserPolicy
 
     public function update(User $user, User $model): bool
     {
-        // منجر اجازه ویرایش حساب ادمین ارشد را ندارد
-        if ($model->isAdmin() && ! $user->isAdmin()) {
-            return false;
+        if ($model->isAdmin()) {
+            return $user->isAdmin();
         }
 
         return $user->isAdmin() || $user->hasPermission('manage_users');
@@ -49,6 +48,10 @@ class UserPolicy
 
     public function forceDelete(User $user, User $model): bool
     {
-        return $user->isAdmin() && $user->id !== $model->id;
+        if ($user->id === $model->id) {
+            return false;
+        }
+
+        return $user->isAdmin();
     }
 }

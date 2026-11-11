@@ -15,7 +15,7 @@ class JalaliDateCast implements CastsAttributes
 {
     public function get(Model $model, string $key, mixed $value, array $attributes): ?Carbon
     {
-        if (! $value) {
+        if (empty($value)) {
             return null;
         }
 
@@ -55,7 +55,7 @@ class JalaliDateCast implements CastsAttributes
 
     public static function toJalali(mixed $date, string $format = 'Y/m/d'): string
     {
-        if (! $date) {
+        if (empty($date)) {
             return '—';
         }
 

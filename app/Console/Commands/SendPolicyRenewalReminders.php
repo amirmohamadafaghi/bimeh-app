@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
+use App\Models\NotificationLog;
 use App\Models\NotificationSetting;
 use App\Models\Policy;
+use App\Models\User;
 use App\Services\NotificationDispatcherService;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
@@ -29,28 +31,26 @@ class SendPolicyRenewalReminders extends Command
             ->whereDate('expires_at', $targetDate)
             ->chunkById(200, function ($policies) use ($dispatcher, $settings, $daysBefore, &$sentCount): void {
                 foreach ($policies as $policy) {
-                    if (! $policy->user) {
-                        continue;
-                    }
+                    if ($policy->user instanceof User) {
+                        $message = $dispatcher->formatTemplate((string) $settings->renewal_template, [
+                            'name'          => $policy->user->name ?: $policy->user->mobile,
+                            'policy_number' => (string) $policy->policy_number,
+                            'amount'        => number_format((int) $policy->total_amount),
+                            'due_date'      => $policy->expires_at_jalali,
+                        ]);
 
-                    $message = $dispatcher->formatTemplate($settings->renewal_template, [
-                        'name'          => $policy->user->name ?: $policy->user->mobile,
-                        'policy_number' => $policy->policy_number,
-                        'amount'        => number_format((int) $policy->total_amount),
-                        'due_date'      => $policy->expires_at_jalali,
-                    ]);
+                        $log = $dispatcher->dispatch(
+                            $policy->user,
+                            'policy_renewal',
+                            (int) $policy->id,
+                            -$daysBefore,
+                            $message,
+                            route('customer.dashboard')
+                        );
 
-                    $log = $dispatcher->dispatch(
-                        $policy->user,
-                        'policy_renewal',
-                        $policy->id,
-                        -$daysBefore,
-                        $message,
-                        route('customer.dashboard')
-                    );
-
-                    if ($log) {
-                        $sentCount++;
+                        if ($log instanceof NotificationLog) {
+                            $sentCount++;
+                        }
                     }
                 }
             });

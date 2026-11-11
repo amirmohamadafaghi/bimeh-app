@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Filament\Resources\InsurerResource\Pages;
 
 use App\Casts\JalaliDateCast;
@@ -9,6 +11,7 @@ use App\Models\Installment;
 use App\Models\NotificationLog;
 use App\Models\NotificationSetting;
 use App\Models\Policy;
+use App\Models\User;
 use App\Services\NotificationDispatcherService;
 use Filament\Actions;
 use Filament\Notifications\Notification;
@@ -20,7 +23,7 @@ class ManageInsurers extends ManageRecords
 
     protected static string $view = 'filament.resources.insurer-resource.pages.manage-insurers';
 
-    public string $serviceTab = 'smart_dispatch'; // smart_dispatch | bale_settings_logs | webapp_notifications
+    public string $serviceTab = 'smart_dispatch';
 
     public string $installmentTemplate = '';
 
@@ -34,10 +37,10 @@ class ManageInsurers extends ManageRecords
     {
         parent::mount();
         $settings = NotificationSetting::current();
-        $this->installmentTemplate = $settings->installment_template;
-        $this->overdueTemplate = $settings->overdue_template;
-        $this->renewalTemplate = $settings->renewal_template;
-        $this->renewalDaysBefore = $settings->renewal_days_before;
+        $this->installmentTemplate = (string) $settings->installment_template;
+        $this->overdueTemplate = (string) $settings->overdue_template;
+        $this->renewalTemplate = (string) $settings->renewal_template;
+        $this->renewalDaysBefore = (int) $settings->renewal_days_before;
     }
 
     protected function getHeaderActions(): array
@@ -55,9 +58,9 @@ class ManageInsurers extends ManageRecords
         $settings = NotificationSetting::current();
         $settings->update([
             'installment_template' => $this->installmentTemplate,
-            'overdue_template' => $this->overdueTemplate,
-            'renewal_template' => $this->renewalTemplate,
-            'renewal_days_before' => $this->renewalDaysBefore,
+            'overdue_template'     => $this->overdueTemplate,
+            'renewal_template'     => $this->renewalTemplate,
+            'renewal_days_before'  => $this->renewalDaysBefore,
         ]);
 
         Notification::make()
@@ -66,9 +69,6 @@ class ManageInsurers extends ManageRecords
             ->send();
     }
 
-    /**
-     * شناسایی خودکار تمام اقساط معوق از دیتابیس و ارسال پیام اختصاصی معوقات
-     */
     public function triggerAutoOverdueMessages(): void
     {
         $overdueInstallments = Installment::with(['policy.user'])
@@ -81,7 +81,7 @@ class ManageInsurers extends ManageRecords
 
         foreach ($overdueInstallments as $inst) {
             $user = $inst->policy?->user;
-            if (! $user) {
+            if ($user === null) {
                 continue;
             }
 
@@ -89,19 +89,20 @@ class ManageInsurers extends ManageRecords
                 ['{name}', '{amount}', '{due_date}', '{policy_number}'],
                 [
                     $user->name ?: $user->mobile,
-                    number_format($inst->amount),
+                    number_format((int) $inst->amount),
                     JalaliDateCast::toJalali($inst->due_date),
-                    $inst->policy->policy_number,
+                    (string) $inst->policy->policy_number,
                 ],
-                $settings->overdue_template
+                (string) $settings->overdue_template
             );
 
             $dispatcher->dispatch(
                 user: $user,
                 type: 'overdue_auto_blast',
-                relatedId: $inst->id,
+                relatedId: (int) $inst->id,
                 offsetDay: (int) now()->format('YmdHi'),
                 message: $msg,
+                signedPaymentUrl: $inst->generateSignedPaymentUrl(),
                 channels: ['bale', 'database', 'webpush']
             );
             $sentCount++;
@@ -113,14 +114,11 @@ class ManageInsurers extends ManageRecords
             ->send();
     }
 
-    /**
-     * شناسایی خودکار بیمه‌نامه‌های در آستانه انقضا و ارسال پیام اختصاصی تمدید
-     */
     public function triggerAutoExpirationMessages(): void
     {
         $settings = NotificationSetting::current();
         $today = now('Asia/Tehran')->toDateString();
-        $limit = now('Asia/Tehran')->addDays($settings->renewal_days_before)->toDateString();
+        $limit = now('Asia/Tehran')->addDays((int) $settings->renewal_days_before)->toDateString();
 
         $expiringPolicies = Policy::with('user')
             ->whereNotNull('expires_at')
@@ -132,7 +130,7 @@ class ManageInsurers extends ManageRecords
 
         foreach ($expiringPolicies as $policy) {
             $user = $policy->user;
-            if (! $user) {
+            if ($user === null) {
                 continue;
             }
 
@@ -141,20 +139,21 @@ class ManageInsurers extends ManageRecords
                 ['{name}', '{policy_number}', '{title}', '{expires_at}', '{days_left}'],
                 [
                     $user->name ?: $user->mobile,
-                    $policy->policy_number,
-                    $policy->vehicle_name ?: $policy->title,
+                    (string) $policy->policy_number,
+                    (string) ($policy->vehicle_name ?: $policy->title),
                     JalaliDateCast::toJalali($policy->expires_at),
-                    $daysLeft,
+                    (string) $daysLeft,
                 ],
-                $settings->renewal_template
+                (string) $settings->renewal_template
             );
 
             $dispatcher->dispatch(
                 user: $user,
                 type: 'renewal_auto_blast',
-                relatedId: $policy->id,
+                relatedId: (int) $policy->id,
                 offsetDay: (int) now()->format('YmdHi'),
                 message: $msg,
+                signedPaymentUrl: route('customer.dashboard'),
                 channels: ['bale', 'database', 'webpush']
             );
             $sentCount++;
@@ -169,7 +168,7 @@ class ManageInsurers extends ManageRecords
     public function retryBaleLog(int $logId): void
     {
         $log = NotificationLog::find($logId);
-        if ($log) {
+        if ($log instanceof NotificationLog) {
             $log->update(['status' => 'queued', 'error_message' => null]);
             SendBaleMessageJob::dispatch($log->id);
             Notification::make()->title('پیام مجدداً در صف ارسال بات بله قرار گرفت.')->success()->send();

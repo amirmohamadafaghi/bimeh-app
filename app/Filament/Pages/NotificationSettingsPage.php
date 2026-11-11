@@ -45,7 +45,7 @@ class NotificationSettingsPage extends Page implements HasForms
     {
         $user = auth()->user();
 
-        return $user ? ($user->isAdmin() || $user->hasPermission('manage_notifications')) : false;
+        return $user instanceof User ? ($user->isAdmin() || $user->hasPermission('manage_notifications')) : false;
     }
 
     public function mount(): void
@@ -54,9 +54,9 @@ class NotificationSettingsPage extends Page implements HasForms
         $this->form->fill($settings->toArray());
 
         $selectedIdsInput = (string) (request()->query('users') ?: request()->query('selected_users', ''));
-        if ($selectedIdsInput !== '') {
+        if (strlen($selectedIdsInput) > 0) {
             $ids = array_values(array_unique(array_filter(array_map('intval', explode(',', $selectedIdsInput)))));
-            if (! empty($ids)) {
+            if (count($ids) > 0) {
                 $this->custom_user_ids = $ids;
             }
         }
@@ -75,7 +75,7 @@ class NotificationSettingsPage extends Page implements HasForms
                             ->required()
                             ->live()
                             ->afterStateUpdated(fn () => $this->autoSaveSettings())
-                            ->helperText('مثال استاندارد: 7, 2, 0, 3- (۳ روز قبل، روز سررسید، ۲ روز بعد و ۷ روز بعد)'),
+                            ->helperText('مثال استاندارد: 7, 2, 0, -3 (۳ روز قبل، روز سررسید، ۲ روز بعد و ۷ روز بعد)'),
 
                         Forms\Components\TextInput::make('renewal_days_before')
                             ->label('آستانه یادآور تمدید بیمه‌نامه (روز قبل از انقضا)')
@@ -141,14 +141,14 @@ class NotificationSettingsPage extends Page implements HasForms
         $state['reminder_offsets'] = array_values(array_unique($offsets));
 
         $settings->update([
-            'reminder_offsets' => $state['reminder_offsets'],
-            'renewal_days_before' => (int) ($state['renewal_days_before'] ?? 15),
-            'adaptive_timing_enabled' => (bool) ($state['adaptive_timing_enabled'] ?? true),
+            'reminder_offsets'          => $state['reminder_offsets'],
+            'renewal_days_before'       => (int) ($state['renewal_days_before'] ?? 15),
+            'adaptive_timing_enabled'   => (bool) ($state['adaptive_timing_enabled'] ?? true),
             'birthday_greeting_enabled' => (bool) ($state['birthday_greeting_enabled'] ?? true),
-            'installment_template' => (string) ($state['installment_template'] ?? $settings->installment_template),
-            'overdue_template' => (string) ($state['overdue_template'] ?? $settings->overdue_template),
-            'renewal_template' => (string) ($state['renewal_template'] ?? $settings->renewal_template),
-            'birthday_template' => (string) ($state['birthday_template'] ?? $settings->birthday_template),
+            'installment_template'      => (string) ($state['installment_template'] ?? $settings->installment_template),
+            'overdue_template'          => (string) ($state['overdue_template'] ?? $settings->overdue_template),
+            'renewal_template'          => (string) ($state['renewal_template'] ?? $settings->renewal_template),
+            'birthday_template'         => (string) ($state['birthday_template'] ?? $settings->birthday_template),
         ]);
 
         NotificationSetting::clearCache();
@@ -162,7 +162,7 @@ class NotificationSettingsPage extends Page implements HasForms
 
     public function selectAllVisibleCustomers(): void
     {
-        $visibleIds = $this->getFilteredCustomers()->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $visibleIds = $this->getFilteredCustomers()->pluck('id')->map(fn ($id): int => (int) $id)->all();
         $this->custom_user_ids = array_values(array_unique(array_merge(
             array_map('intval', $this->custom_user_ids),
             $visibleIds
@@ -171,12 +171,11 @@ class NotificationSettingsPage extends Page implements HasForms
 
     public function selectOverdueCustomers(): void
     {
-        // مشکل خطای 500 در این متد با افزودن پیشوند installments به وضعیت برطرف شده است
         $overdueUserIds = Installment::where('installments.status', 'overdue')
             ->join('policies', 'installments.policy_id', '=', 'policies.id')
             ->pluck('policies.user_id')
             ->filter()
-            ->map(fn ($id) => (int) $id)
+            ->map(fn ($id): int => (int) $id)
             ->unique()
             ->values()
             ->all();
@@ -200,7 +199,7 @@ class NotificationSettingsPage extends Page implements HasForms
     public function retryFailedLog(int $logId): void
     {
         $log = NotificationLog::find($logId);
-        if ($log) {
+        if ($log instanceof NotificationLog) {
             $log->update(['status' => 'queued', 'error_message' => null]);
             SendBaleMessageJob::dispatch($log->id);
 
@@ -216,12 +215,12 @@ class NotificationSettingsPage extends Page implements HasForms
         $this->custom_user_ids = array_values(array_unique(array_filter(array_map('intval', $this->custom_user_ids))));
 
         $this->validate([
-            'custom_user_ids' => ['required', 'array', 'min:1'],
+            'custom_user_ids'   => ['required', 'array', 'min:1'],
             'custom_user_ids.*' => ['integer', 'exists:users,id'],
-            'custom_message' => ['required', 'string', 'min:3'],
+            'custom_message'    => ['required', 'string', 'min:3'],
         ], [
             'custom_user_ids.required' => 'لطفاً حداقل یک بیمه‌گذار را از لیست انتخاب کنید.',
-            'custom_message.required' => 'لطفاً متن پیام اختصاصی را وارد کنید.',
+            'custom_message.required'  => 'لطفاً متن پیام اختصاصی را وارد کنید.',
         ]);
 
         $successCount = 0;
@@ -243,16 +242,17 @@ class NotificationSettingsPage extends Page implements HasForms
 
         if ($successCount === 0) {
             Notification::make()->title('هیچ کاربری یافت نشد.')->warning()->send();
+
             return;
         }
 
         SystemActivity::create([
-            'actor_id' => auth()->id(),
+            'actor_id'   => auth()->id(),
             'event_type' => 'notification_sent',
-            'title' => "ارسال پیام اختصاصی به {$successCount} بیمه‌گذار",
-            'icon' => 'app_notifications',
-            'color' => 'indigo',
-            'details' => [
+            'title'      => "ارسال پیام اختصاصی به {$successCount} بیمه‌گذار",
+            'icon'       => 'app_notifications',
+            'color'      => 'indigo',
+            'details'    => [
                 'description' => mb_substr(trim($this->custom_message), 0, 120),
             ],
         ]);
@@ -271,7 +271,7 @@ class NotificationSettingsPage extends Page implements HasForms
 
         $customers = User::query()
             ->select(['id', 'name', 'mobile', 'national_code'])
-            ->when($search !== '', function ($q) use ($search): void {
+            ->when(strlen($search) > 0, function ($q) use ($search): void {
                 $q->where(function ($sub) use ($search): void {
                     $sub->where('name', 'like', "%{$search}%")
                         ->orWhere('mobile', 'like', "%{$search}%")
@@ -282,7 +282,7 @@ class NotificationSettingsPage extends Page implements HasForms
             ->limit(120)
             ->get();
 
-        if (! empty($this->custom_user_ids)) {
+        if (count($this->custom_user_ids) > 0) {
             $selectedUsers = User::whereIn('id', $this->custom_user_ids)
                 ->get(['id', 'name', 'mobile', 'national_code']);
             $customers = $selectedUsers->merge($customers)->unique('id')->values();
@@ -304,9 +304,9 @@ class NotificationSettingsPage extends Page implements HasForms
             ->get();
 
         return [
-            'logs' => $logs,
+            'logs'       => $logs,
             'activities' => $activities,
-            'customers' => $this->getFilteredCustomers(),
+            'customers'  => $this->getFilteredCustomers(),
         ];
     }
 }

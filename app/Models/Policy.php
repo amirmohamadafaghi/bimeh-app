@@ -77,33 +77,37 @@ class Policy extends Model
 
     public function getStartedAtJalaliAttribute(): string
     {
-        if (! empty($this->attributes['started_at_jalali'])) {
-            return (string) $this->attributes['started_at_jalali'];
-        }
-        if ($this->started_at) {
-            return JalaliDateCast::toJalali($this->started_at);
+        if (empty($this->attributes['started_at_jalali'])) {
+            if ($this->started_at) {
+                return JalaliDateCast::toJalali($this->started_at);
+            }
+
+            return $this->getIssuedAtJalaliAttribute();
         }
 
-        return $this->getIssuedAtJalaliAttribute();
+        return (string) $this->attributes['started_at_jalali'];
     }
 
     public function getIssuedAtJalaliAttribute(): string
     {
-        if (! empty($this->attributes['issued_at_jalali'])) {
-            return (string) $this->attributes['issued_at_jalali'];
-        }
-        if (! empty($this->attributes['started_at_jalali'])) {
+        if (empty($this->attributes['issued_at_jalali'])) {
+            if (empty($this->attributes['started_at_jalali'])) {
+                return JalaliDateCast::toJalali($this->issued_at ?? $this->started_at);
+            }
+
             return (string) $this->attributes['started_at_jalali'];
         }
 
-        return JalaliDateCast::toJalali($this->issued_at ?? $this->started_at);
+        return (string) $this->attributes['issued_at_jalali'];
     }
 
     public function getExpiresAtJalaliAttribute(): string
     {
-        return ! empty($this->attributes['expires_at_jalali'])
-            ? (string) $this->attributes['expires_at_jalali']
-            : JalaliDateCast::toJalali($this->expires_at);
+        if (empty($this->attributes['expires_at_jalali'])) {
+            return JalaliDateCast::toJalali($this->expires_at);
+        }
+
+        return (string) $this->attributes['expires_at_jalali'];
     }
 
     public function getInsuranceTypeAttribute(): string
